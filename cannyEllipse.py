@@ -98,24 +98,22 @@ def compute_threshold(res, img, ratio, fname):
                 area = ellipseArea(ellipse[1][0] * 0.5, ellipse[1][1] * 0.5)
                 full_area.append(area)
 
-            # if(area > 250. and area < area_mean): #1100.
-               #  ellipses.append(ellipse)
             temp.append(ellipse)
 
         except Exception as e:
             pass 
 
     full_mean = np.array(full_area).mean()
-    dev = 0.5 * np.array(full_area).std()
-    print full_mean, dev
+    dev = np.array(full_area).std()
 
     # adjust mean if the std_dev is large
     if (full_mean < 1500. and dev >= 10000.):
-        full_mean += dev
+        full_mean += 0.5 * dev
 
     # Check to make sure mean is not too small a bound
-    if(full_mean < 1000.):
+    elif(full_mean < 1500.):
         full_mean = 1500.
+
     # Reduce the bound by half if the outer limit is too large
     if(full_mean > 10000.):
         full_mean = 5000.       
@@ -124,13 +122,8 @@ def compute_threshold(res, img, ratio, fname):
         if(area > 250. and area < full_mean):
             ellipses.append(ellipse)
 
-    if len(ellipses) < 10.:
-        full_mean += dev
-        for area, ellipse in zip(full_area, temp):
-            if(area > 250. and area < full_mean):
-                ellipses.append(ellipse)
-
     # Drop repeats
+    print full_mean 
     ellipses = list(set(ellipses))
 
     # Organize into clusters, find largest, sort by area
@@ -138,8 +131,21 @@ def compute_threshold(res, img, ratio, fname):
     lg = max(out, key = len)
     lg.sort(key = lambda lg: lg[1][0] * lg[1][1] / 4.0)
 
+    # If there are less than 25 ellipses, grab a new sample 
+    if len(lg) < 25.:
+        print 'len less than 25'
+        for area, ellipse in zip(full_area, temp):
+            if(area > 250. and area < max(full_area) / 2. - 2. * dev):
+                ellipses.append(ellipse)
+
+        # Recluster the extended range
+        out = cluster(ellipses, ratio)
+        lg = max(out, key = len)
+        lg.sort(key = lambda lg: lg[1][0] * lg[1][1] / 4.0)     
+
+
     # Grab the largest elements
-    e = lg#[: - (int(len(lg) * 0.1))]
+    e = lg
     area = []
 
     # Draw the elements
@@ -167,7 +173,10 @@ def cluster(data, maxgap):
         x1_b = x1[0]
         x_r = x1_b / x1_a
 
-        if x_r <= maxgap:
+        # Ratios larger than 50 resemble lines
+        too_large = x1_a / x1_b
+
+        if x_r <= maxgap and too_large <= 50.:
             groups[-1].append(x)
 
     return groups
