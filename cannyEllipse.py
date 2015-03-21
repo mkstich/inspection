@@ -48,7 +48,7 @@ def meanEllipse(e1, e2):
 def distEllipse(e1, e2):
     return np.sqrt((e1.x - e2.x)**2 + (e1.y - e2.y)**2)
 
-################################################################3333
+####################################################################
 
 def find_handles(img):
     '''Detect the orange handles in the image by applying the mask'''
@@ -65,11 +65,12 @@ def pltplot(img, name):
     fname = name + '.png'
     cv2.imwrite(fname, img)
     # cv2.imshow(fname, img)
+    cv2.waitKey(0)
 
 def ellipseArea(a, b):
     return math.pi * a * b
 
-def compute_threshold(res, img, ratio):
+def compute_threshold(res, img, ratio, fname):
     '''Use Canny edge detection to find the contours, 
     Sort the contours into shapes'''
 
@@ -87,7 +88,7 @@ def compute_threshold(res, img, ratio):
     # cv2.imwrite('contours.png', h_img)
     # cv2.waitKey(0)
 
-    ellipses = []
+    ellipses, full_area, temp = [], [], []
     cnts = []
     for cnt in contours:
         try:
@@ -95,12 +96,39 @@ def compute_threshold(res, img, ratio):
             if len(cnt) > 4:
                 ellipse = cv2.fitEllipse(cnt)
                 area = ellipseArea(ellipse[1][0] * 0.5, ellipse[1][1] * 0.5)
+                full_area.append(area)
 
-            if(area > 250. and area < 1100.):
-                ellipses.append(ellipse)
+            # if(area > 250. and area < area_mean): #1100.
+               #  ellipses.append(ellipse)
+            temp.append(ellipse)
 
         except Exception as e:
             pass 
+
+    full_mean = np.array(full_area).mean()
+    dev = 0.5 * np.array(full_area).std()
+    print full_mean, dev
+
+    # adjust mean if the std_dev is large
+    if (full_mean < 1500. and dev >= 10000.):
+        full_mean += dev
+
+    # Check to make sure mean is not too small a bound
+    if(full_mean < 1000.):
+        full_mean = 1500.
+    # Reduce the bound by half if the outer limit is too large
+    if(full_mean > 10000.):
+        full_mean = 5000.       
+
+    for area, ellipse in zip(full_area, temp):
+        if(area > 250. and area < full_mean):
+            ellipses.append(ellipse)
+
+    if len(ellipses) < 10.:
+        full_mean += dev
+        for area, ellipse in zip(full_area, temp):
+            if(area > 250. and area < full_mean):
+                ellipses.append(ellipse)
 
     # Drop repeats
     ellipses = list(set(ellipses))
@@ -111,7 +139,7 @@ def compute_threshold(res, img, ratio):
     lg.sort(key = lambda lg: lg[1][0] * lg[1][1] / 4.0)
 
     # Grab the largest elements
-    e = lg[: - (int(len(lg) * 0.1))]
+    e = lg#[: - (int(len(lg) * 0.1))]
     area = []
 
     # Draw the elements
@@ -121,9 +149,7 @@ def compute_threshold(res, img, ratio):
         area.append(ellipseArea(ellipse[1][0] * 0.5, ellipse[1][1] * 0.5))
 
     # # Show the result
-    cv2.imshow('filtered_ellipse', img)
-    cv2.imwrite('filtered_ellipse.png', img)
-    cv2.waitKey(0)
+    pltplot(img, fname)
 
     return e, contours, area
 
@@ -146,7 +172,7 @@ def cluster(data, maxgap):
 
     return groups
 
-def combineEllipse(e1, e2, img1, dx, dy):
+def combineEllipse(e1, e2, img1, dx, dy, fname):
     '''Combine left and right image ellipses
     into one image. Apply a shift dx and dy shift
     to the second set of ellipses to align on new image'''
@@ -165,10 +191,7 @@ def combineEllipse(e1, e2, img1, dx, dy):
         ellip2.append(e_2)
         drawEllipse(img1, e_2, (0, 255, 0))
 
- 
-    cv2.imshow('joint_ellipse', img1)
-    cv2.imwrite('joint_ellipse.png', img1)
-    cv2.waitKey(0)
+    pltplot(img1, fname)
 
     return ellip1, ellip2
 
@@ -192,7 +215,7 @@ def matching(e1, e2):
         
     return orig, matches
 
-def best_guess(orig, match, img1):
+def best_guess(orig, match, img1, fname):
     best = []
 
     for e1, e2 in zip(orig, match):
@@ -200,13 +223,11 @@ def best_guess(orig, match, img1):
         drawEllipse(img1, new_ellip, (0, 255, 0))
         best.append(new_ellip)  
 
-    cv2.imshow('best_ellipse', img1)
-    cv2.imwrite('best_ellipse.png', img1)
-    cv2.waitKey(0)
+    pltplot(img1, fname)
 
     return best
 
-def plot_all(e1, e2, best, img1):
+def plot_all(e1, e2, best, img1, fname):
     for i in e1:
         drawEllipse(img1, i, (0, 255, 0))
     
@@ -216,51 +237,68 @@ def plot_all(e1, e2, best, img1):
     for k in best:
         drawEllipse(img1, k, (255, 0, 0))
 
-    cv2.imshow('all', img1)
-    cv2.imwrite('all_and_best.png', img1)
-    cv2.waitKey(0)
+    pltplot(img1, fname)
 
 
 def test_debug():
     imgL = cv2.imread('left.png')
     imgR = cv2.imread('right.png')
 
+    hL_name = 'filtered_ellipse_L'
+    hR_name = 'filtered_ellipse_R'
+    j_name = 'joint_ellipse'
+    b_name = 'best_ellipse'
+    all_name = 'all_and_best'
+
     handlesL = find_handles(imgL)
     pltplot(handlesL, 'handlesL')
     h_img = cv2.imread('handlesL.png')
-    e, cts, a_L = compute_threshold(handlesL, h_img.copy(), 0.35)
+    e, cts, a_L = compute_threshold(handlesL, h_img.copy(), 0.35, hL_name)
 
     handlesR = find_handles(imgR)
     pltplot(handlesR, 'handlesR')
     r_img = cv2.imread('handlesR.png')
-    er, cts_r, a_R = compute_threshold(handlesR, r_img.copy(), 0.35)
+    er, cts_r, a_R = compute_threshold(handlesR, r_img.copy(), 0.35, hR_name)
 
-    e1, e2 = combineEllipse(e, er, h_img.copy(), 35., 0.)
+    e1, e2 = combineEllipse(e, er, h_img.copy(), 35., 0., j_name)
     orig, match = matching(e1, e2)
-    best = best_guess(orig, match, h_img.copy())
-    plot_all(e1, e2, best, h_img.copy())
+    best = best_guess(orig, match, h_img.copy(), b_name)
+    plot_all(e1, e2, best, h_img.copy(), all_name)
 
-# folders = ['Test '+ str(i) for i in range(1, 4)]
+def multiTest():
+    folders = ['Test '+ str(i) for i in range(1, 5)]
 
-# for folder in folders:
-#   imgL = cv2.imread(folder + '\left.jpeg')
-#   imgR = cv2.imread(folder + '\right.jpeg')
+    for folder in folders:
+        print folder 
+        h1 = folder + '/handlesL'
+        h1_full = h1 + '.png'
+        h2 = folder + '/handlesR'
+        h2_full = h2 + '.png'
+        hL_name = folder + '/filtered_ellipse_L'
+        hR_name = folder + '/filtered_ellipse_R'
+        j_name = folder + '/joint_ellipse'
+        b_name = folder + '/best_ellipse'
+        all_name = folder + '/all_and_best'
 
-#   handlesL = find_handles(imgL)
-#   pltplot(handlesL, '\handlesL', folder)
-#   h_img = cv2.imread(folder + '\handlesL.png')
+        imgL = cv2.imread(folder + '/left.jpeg')
+        imgR = cv2.imread(folder + '/right.jpeg')
 
-#   e, cts, a_L = compute_threshold(handlesL, h_img.copy(), 0.35, folder)
+        handlesL = find_handles(imgL)
+        pltplot(handlesL, h1)
+        h_img = cv2.imread(h1_full)
+
+        e, cts, a_L = compute_threshold(handlesL, h_img.copy(), 0.35, hL_name)
+
+        handlesR = find_handles(imgR)
+        pltplot(handlesR, h2)
+        r_img = cv2.imread(h2_full)
+
+        er, cts_r, a_R = compute_threshold(handlesR, r_img.copy(), 0.35, hR_name)
+
+        e1, e2 = combineEllipse(e, er, h_img.copy(), 35., 0., j_name)
+        orig, match = matching(e1, e2)
+        best = best_guess(orig, match, h_img.copy(), b_name)
+
+        plot_all(e1, e2, best, h_img.copy(), all_name)
 
 
-#   handlesR = find_handles(imgR)
-#   pltplot(handlesR, '\handlesR', folder)
-#   r_img = cv2.imread(folder + '\handlesR.png')
-
-#   er, cts_r, a_R = compute_threshold(handlesR, r_img.copy(), 0.35, folder)
-
-#   e1, e2 = combineEllipse(e, er, h_img.copy(), 35., folder)
-#   orig, match = matching(e1, e2, folder)
-#   best = best_guess(orig, match, h_img.copy(), folder)
-
-#   plot_all(e1, e2, best, h_img.copy(), folder)
