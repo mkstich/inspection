@@ -21,7 +21,7 @@ def locateStereoPoints(imagesL, imagesR):
 
     for (lname, rname) in zip(imagesL, imagesR):
         img1 = cv2.imread(lname) #img1
-        img = cv2.imread(rname) #img2
+        img2 = cv2.imread(rname) #img2
 
         imgL = cv2.cvtColor(img1, cv2.COLOR_BGR2GRAY)
         imgR = cv2.cvtColor(img2, cv2.COLOR_BGR2GRAY)
@@ -37,17 +37,17 @@ def locateStereoPoints(imagesL, imagesR):
         h, w = imgL.shape[:2]
         foundL, cornersL = cv2.findChessboardCorners(imgL, pattern_size)
         foundR, cornersR = cv2.findChessboardCorners(imgR, pattern_size)
+        term = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_COUNT, 30, 0.1)
 
-        if foundL and foundR:
-            term = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_COUNT, 30, 0.1)
+        if foundL:
             cv2.cornerSubPix(imgL, cornersL, (5, 5), (-1, -1), term)
-            cv2.cornerSubPix(imgR, cornersR, (5, 5), (-1, -1), term)
-
-            # append the obj and corner points
             img_points_L.append(cornersL.reshape(-1, 2))
+
+        if foundR:
+            cv2.cornerSubPix(imgR, cornersR, (5, 5), (-1, -1), term)
             img_points_R.append(cornersR.reshape(-1, 2))
 
-            obj_points.append(pattern_points)
+        obj_points.append(pattern_points)
 
         if not foundL:
             print 'left chessboard not found'
@@ -70,6 +70,15 @@ def main():
     dist1 = dist1.ravel()
     dist2 = dist2.ravel()
 
+    cam1 = np.array([[1.53216158e+03, 0., 8.96615289e+02],
+                    [0., 1.43951272e+03, 5.44758043e+02],
+                    [0., 0., 1.]])
+    # dist1 = np.array([0.03702081, 0.85215103, 0.00343193, -0.02808688, -1.08401299])
+
+    cam2 = np.array([[1.4409744e+03, 0., 7.74076208e+02],
+                    [0., 1.42435001e+03, 5.27489490e+02],
+                    [0., 0., 1.]])
+    # dist2 = np.array([-0.23991173, 1.3750377, -0.03521028, -0.06381475, -3.57839555])
     # Perform Stereo Rectification
     (R1, R2, P1, P2, Q, roi1, roi2) = cv2.stereoRectify(
         cam1, dist1, cam2, dist2, imsize, R, T)

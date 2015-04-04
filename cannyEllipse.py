@@ -40,8 +40,19 @@ def meanEllipse(e1, e2):
     x = np.mean([e1.x, e2.x]) 
     y = np.mean([e1.y, e2.y]) 
     a = np.mean([e1.a, e2.a]) 
-    b = np.mean([e1.b, e2.b]) 
+    b = np.mean([e1.b, e2.b])
+    # print e1.r, e2.r
+    if abs(e1.r - e2.r) >= 160.:
+        lg = e1.r
+
+        if e2.r > lg:
+            e2.r -= 180.
+        else:
+            e1.r -= 180.
+
     r = np.mean([e1.r, e2.r])
+    print e1.r, e2.r, r
+
     return Ellipse(x, y, a, b, r)
 
 
@@ -70,9 +81,10 @@ def pltplot(img, name):
 def ellipseArea(a, b):
     return math.pi * a * b
 
-def compute_threshold(res, img, ratio, fname):
+def compute_threshold(res, img, fname):
     '''Use Canny edge detection to find the contours, 
-    Sort the contours into shapes'''
+    Sort the contours into ellipses and then filter out ellipses 
+    that do not have a small minor axis to major axis ratio'''
 
     # Get the edge map of the image
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
@@ -95,57 +107,19 @@ def compute_threshold(res, img, ratio, fname):
             # Cannot uniquely fit an ellipse with less than 5 points
             if len(cnt) > 4:
                 ellipse = cv2.fitEllipse(cnt)
-                area = ellipseArea(ellipse[1][0] * 0.5, ellipse[1][1] * 0.5)
-                full_area.append(area)
 
             temp.append(ellipse)
 
         except Exception as e:
             pass 
 
-    full_mean = np.array(full_area).mean()
-    dev = np.array(full_area).std()
-
-    # adjust mean if the std_dev is large
-    if (full_mean < 1500. and dev >= 10000.):
-        full_mean += 0.5 * dev
-
-    # Check to make sure mean is not too small a bound
-    elif(full_mean < 1500.):
-        full_mean = 1500.
-
-    # Reduce the bound by half if the outer limit is too large
-    if(full_mean > 10000.):
-        full_mean = 5000.       
-
-    for area, ellipse in zip(full_area, temp):
-        if(area > 250. and area < full_mean):
-            ellipses.append(ellipse)
-
     # Drop repeats
-    print full_mean 
-    ellipses = list(set(ellipses))
+    ellipses = list(set(temp))
 
     # Organize into clusters, find largest, sort by area
-    out = cluster(ellipses, ratio)
-    lg = max(out, key = len)
-    lg.sort(key = lambda lg: lg[1][0] * lg[1][1] / 4.0)
+    e = cluster(ellipses)
+    print len(ellipses), len(e) 
 
-    # If there are less than 25 ellipses, grab a new sample 
-    if len(lg) < 25.:
-        print 'len less than 25'
-        for area, ellipse in zip(full_area, temp):
-            if(area > 250. and area < max(full_area) / 2. - 2. * dev):
-                ellipses.append(ellipse)
-
-        # Recluster the extended range
-        out = cluster(ellipses, ratio)
-        lg = max(out, key = len)
-        lg.sort(key = lambda lg: lg[1][0] * lg[1][1] / 4.0)     
-
-
-    # Grab the largest elements
-    e = lg
     area = []
 
     # Draw the elements
@@ -159,29 +133,53 @@ def compute_threshold(res, img, ratio, fname):
 
     return e, contours, area
 
-def cluster(data, maxgap):
+def cluster(data):
     ''' 
     Arrange data into groups where successive elements differ by no more than
     maxgap. '''
+    min_ratio, i = 0., 0
+    max_ratio = 0.
+    groups, final = [], []
 
-    groups = [[data[0]]]
-    for x in data[1:]:
+    for x in data:
         x1 = np.array(x[1])
-
         # minor axis to major axis ratio
         x1_a = x1[1]
         x1_b = x1[0]
+        
         x_r = x1_b / x1_a
+        groups.append((x, x_r))
 
-        # Ratios larger than 50 resemble lines
-        too_large = x1_a / x1_b
+    # Grab the smallest 17.5 % ratios
+    lbound = 0.01
+    ubound = 0.175 # 0.15
 
-        if x_r <= maxgap and too_large <= 50.:
-            groups[-1].append(x)
+    full_area = []
+    for x in groups:
+        x_r = x[1]
 
-    return groups
+        if x_r >= lbound and x_r <= ubound:
+            final.append(x[0])
+            area = ellipseArea(x[0][1][0] * 0.5, x[0][1][1] * 0.5)
+            full_area.append(area)
 
-def combineEllipse(e1, e2, img1, dx, dy, fname):
+    result = []
+    dev = np.array(full_area).std()
+    # Remove any remaining outliers
+    for area, x in zip(full_area, final):
+        if area > 200. and area < np.array(full_area).mean() + 1.5 * dev:
+            result.append(x)
+
+    return result
+
+def convertTranslation(translation, z, mag):
+    inchToPx = 960.00
+    scale = z / 1600.
+    shift = ((translation * inchToPx) / 566.89611162999995) / scale * mag
+
+    return shift
+
+def combineEllipse(e1, e2, img1, disp, fname, points): #, disp_value, mag):
     '''Combine left and right image ellipses
     into one image. Apply a shift dx and dy shift
     to the second set of ellipses to align on new image'''
@@ -196,19 +194,64 @@ def combineEllipse(e1, e2, img1, dx, dy, fname):
         drawEllipse(img1, e_1, (0, 0, 255))
     
     for ellipse in e2:
+        e_2_temp = createEllipse(ellipse)
+        y, x = round(e_2_temp.x), round(e_2_temp.y)
+
+        Tnorm = np.linalg.norm(stereoCams.T)
+        d = disp[x - 1][y - 1] #/ Tnorm
+        z = points[x- 1][y - 1][2] + stereoCams.T[2]
+        dx = d #abs(d * 2. * stereoCams.T[0]) + abs(stereoCams.T[1] * Tnorm)
+        dy = d #(d * stereoCams.T[1] * Tnorm) + stereoCams.T[0]
+        print dx, dy, disp[x - 1][y - 1], points[x - 1][y - 1][2]
+
         e_2 = shiftEllipse(ellipse, dx, dy)
+
         ellip2.append(e_2)
         drawEllipse(img1, e_2, (0, 255, 0))
 
     pltplot(img1, fname)
+    cv2.imshow("joint", img1)
+    cv2.waitKey(0)
 
     return ellip1, ellip2
+
+def bestDetection(e, er, img1, disp_points, folder, z, disp_value):
+
+    if folder != None:
+        j_name = folder + '/joint_ellipse'
+        b_name = folder + '/best_ellipse'
+        all_name = folder + '/all_and_best'
+    else:
+        j_name = 'joint_ellipse'
+        b_name = 'best_ellipse'
+        all_name = 'all_and_best'
+
+    mag_array = np.linspace(0.05, 1.0, num = 20)
+    results = []
+    for mag in mag_array:
+        e1, e2 = combineEllipse(e, er, img1.copy(), disp_points, j_name, z, disp_value, mag)
+        orig, match = matching(e1, e2)
+        results.append((orig, match))
+
+    max_match, index = 0., 0
+    for i in range(len(results)):
+        temp = len(results[i][1])
+
+        if temp >= max_match:
+            max_match = temp
+            index = i
+    
+    orig, match = results[index][0], results[index][1]
+    best = best_guess(orig, match, img1.copy(), b_name)
+    print max_match
+    return e1, e2, best
+
 
 def matching(e1, e2):
     orig, matches = [], []
 
     for i in e1:
-        min_val = 10.
+        min_val = 15.
         match = None
 
         for j in e2:
@@ -250,26 +293,31 @@ def plot_all(e1, e2, best, img1, fname):
 
 
 def test_debug():
-    imgL = cv2.imread('left.png')
-    imgR = cv2.imread('right.png')
+    imgL = cv2.imread('rectify_imgL.png')
+    imgR = cv2.imread('rectify_imgR.png')
 
     hL_name = 'filtered_ellipse_L'
     hR_name = 'filtered_ellipse_R'
-    j_name = 'joint_ellipse'
-    b_name = 'best_ellipse'
+    folder = None
+    # j_name = 'joint_ellipse'
+    # b_name = 'best_ellipse'
     all_name = 'all_and_best'
 
     handlesL = find_handles(imgL)
     pltplot(handlesL, 'handlesL')
     h_img = cv2.imread('handlesL.png')
-    e, cts, a_L = compute_threshold(handlesL, h_img.copy(), 0.35, hL_name)
+    e, cts, a_L = compute_threshold(handlesL, h_img.copy(), hL_name)
 
     handlesR = find_handles(imgR)
     pltplot(handlesR, 'handlesR')
     r_img = cv2.imread('handlesR.png')
-    er, cts_r, a_R = compute_threshold(handlesR, r_img.copy(), 0.35, hR_name)
+    er, cts_r, a_R = compute_threshold(handlesR, r_img.copy(), hR_name)
 
-    e1, e2 = combineEllipse(e, er, h_img.copy(), 35., 0., j_name)
+    # disparity = get_disparity(h_img, r_img)
+    disp_pts, points, dvalue = disparity(h_img, r_img)
+    e1, e2, best = bestDetection(e, er, h_img.copy(), disp_pts, folder, points, dvalue)
+
+    e1, e2 = combineEllipse(e, er, h_img.copy(), disp, j_name, points)
     orig, match = matching(e1, e2)
     best = best_guess(orig, match, h_img.copy(), b_name)
     plot_all(e1, e2, best, h_img.copy(), all_name)
@@ -285,28 +333,31 @@ def multiTest():
         h2_full = h2 + '.png'
         hL_name = folder + '/filtered_ellipse_L'
         hR_name = folder + '/filtered_ellipse_R'
-        j_name = folder + '/joint_ellipse'
-        b_name = folder + '/best_ellipse'
+        # j_name = folder + '/joint_ellipse'
+        # b_name = folder + '/best_ellipse'
         all_name = folder + '/all_and_best'
 
-        imgL = cv2.imread(folder + '/left.jpeg')
-        imgR = cv2.imread(folder + '/right.jpeg')
+        imgL = cv2.imread(folder + '/rectify_imgL.png')
+        imgR = cv2.imread(folder + '/rectify_imgR.png')
 
         handlesL = find_handles(imgL)
         pltplot(handlesL, h1)
         h_img = cv2.imread(h1_full)
 
-        e, cts, a_L = compute_threshold(handlesL, h_img.copy(), 0.35, hL_name)
+        e, cts, a_L = compute_threshold(handlesL, h_img.copy(), hL_name)
 
         handlesR = find_handles(imgR)
         pltplot(handlesR, h2)
         r_img = cv2.imread(h2_full)
 
-        er, cts_r, a_R = compute_threshold(handlesR, r_img.copy(), 0.35, hR_name)
+        er, cts_r, a_R = compute_threshold(handlesR, r_img.copy(), hR_name)
 
-        e1, e2 = combineEllipse(e, er, h_img.copy(), 35., 0., j_name)
-        orig, match = matching(e1, e2)
-        best = best_guess(orig, match, h_img.copy(), b_name)
+        disp_pts, points, dvalue = disparity(h_img, r_img)
+        e1, e2, best = bestDetection(e, er, h_img.copy(), disp_pts, folder, points, dvalue)
+
+        # e1, e2 = combineEllipse(e, er, h_img.copy(), disp_pts, j_name, points, dvalue)
+        # orig, match = matching(e1, e2)
+        # best = best_guess(orig, match, h_img.copy(), b_name)
 
         plot_all(e1, e2, best, h_img.copy(), all_name)
 
