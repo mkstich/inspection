@@ -157,8 +157,8 @@ def remapImages(imgL, imgR, cameraObj, imsize, folder):
 
 def computeDisparity(r_imgL, r_imgR, cameraObj):
     window_size = 11
-    min_disp = 10
-    num_disp = 26 - min_disp
+    min_disp = 20
+    num_disp = 52 - min_disp # 26
     stereo = cv2.StereoSGBM(minDisparity=min_disp,
                             numDisparities=num_disp,
                             SADWindowSize=window_size,
