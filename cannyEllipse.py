@@ -28,11 +28,11 @@ def createEllipse(ellipse):
 
 
 def shiftEllipse(ellipse, dx, dy):
-    x = ellipse[0][0] + dx
-    y = ellipse[0][1] + dy
-    a = ellipse[1][0]
-    b = ellipse[1][1]
-    r = ellipse[2]
+    x = ellipse.x + dx
+    y = ellipse.y + dy
+    a = ellipse.a
+    b = ellipse.b
+    r = ellipse.r
     return Ellipse(x, y, a, b, r)
 
 
@@ -59,6 +59,18 @@ def meanEllipse(e1, e2):
 def distEllipse(e1, e2):
     return np.sqrt((e1.x - e2.x)**2 + (e1.y - e2.y)**2)
 
+def distEnd(e1, e2):
+    endL = np.sqrt(((e1.x - e1.a) - e2.x)**2 + (e1.y - e2.y)**2)
+    endR = np.sqrt(((e1.x + e1.a) - e2.x)**2 + (e1.y - e2.y)**2)
+    return endL, endR
+
+def distBothEnd(e1, e2):
+    endL1 = np.sqrt(((e1.x - e1.a) - (e2.x - e2.a))**2 + (e1.y - e2.y)**2)
+    endL2 = np.sqrt(((e1.x - e1.a) - (e2.x + e2.a))**2 + (e1.y - e2.y)**2)
+    endR1 = np.sqrt(((e1.x + e1.a) - (e2.x - e2.a))**2 + (e1.y - e2.y)**2)
+    endR2 = np.sqrt(((e1.x + e1.a) - (e2.x + e2.a))**2 + (e1.y - e2.y)**2)
+    return endL1, endL2, endR1, endR2
+
 ####################################################################
 
 def find_handles(img):
@@ -80,6 +92,60 @@ def pltplot(img, name):
 
 def ellipseArea(a, b):
     return math.pi * a * b
+
+def removeDuplicate(e):
+    ellipse = []
+    for i in e:
+        ellipse.append(createEllipse(i))
+
+    keep = []
+    half = round(len(ellipse) / 2.)
+
+    for i in range(len(ellipse)):
+        match = False#True
+        one = ellipse[i]
+
+        for j in range(len(ellipse[i+1:])):
+            two = ellipse[j + i]
+            far_away = False
+
+            d = distEllipse(one, two)
+            if d > 1000.:
+                far_away = True
+
+            left = one.x - one.a - 10.
+            right = one.x + one.a + 10.
+            top = one.y + one.b
+            bottom = one.y - one.b
+            # print one.x, one.y, '\t', two.x, two.y, '\t', 
+            print d, left, right, top, bottom
+
+            # ellipse 2 is near ellipse 1
+            case1 = left <= two.x <= right
+            case6 = bottom <= two.y <= top
+            case2 = left <= (two.x - two.a) <= right
+            case3 = left <= (two.x + two.a) <= right
+            case4 = bottom <= (two.y - two.b) <= top
+            case5 = bottom <= (two.y + two.b) <= top 
+
+            if far_away == True:
+                match = True#False
+
+            if(i <= half):
+                if (case1 and case6) == True \
+                    and (case3 == True or case2 == True\
+                    or case4 == True or case5 == True):
+
+                    if ellipseArea(one.a, one.b) > ellipseArea(two.a, two.b):
+                        match = True
+            elif far_away == False:
+                match = False
+
+        if (match is True):
+            keep.append(one)
+
+    return keep
+
 
 def compute_threshold(res, img, fname):
     '''Use Canny edge detection to find the contours, 
@@ -118,20 +184,23 @@ def compute_threshold(res, img, fname):
 
     # Organize into clusters, find largest, sort by area
     e = cluster(ellipses)
-    print len(ellipses), len(e) 
+    print len(ellipses), len(e)
 
-    area = []
+    # sort ellipses based on center x - coord
+    e = sorted(e, key = lambda e: e[1][0] * e[1][1], reverse = True)
+    e = removeDuplicate(e)
+    # area = []
 
     # Draw the elements
     for ellipse in e:
         # # Draw an ellipse
-        cv2.ellipse(img, ellipse, (0, 0, 255), 2)
-        area.append(ellipseArea(ellipse[1][0] * 0.5, ellipse[1][1] * 0.5))
+        drawEllipse(img, ellipse, (0, 0, 255))
+        # area.append(ellipseArea(ellipse[1][0] * 0.5, ellipse[1][1] * 0.5))
 
     # # Show the result
     pltplot(img, fname)
 
-    return e, contours, area
+    return e, contours
 
 def cluster(data):
     ''' 
@@ -152,7 +221,7 @@ def cluster(data):
 
     # Grab the smallest 17.5 % ratios
     lbound = 0.01
-    ubound = 0.175 # 0.15
+    ubound = 0.30 #175 # 0.15
 
     full_area = []
     for x in groups:
@@ -167,7 +236,7 @@ def cluster(data):
     dev = np.array(full_area).std()
     # Remove any remaining outliers
     for area, x in zip(full_area, final):
-        if area > 200. and area < np.array(full_area).mean() + 1.5 * dev:
+        if area > 100. and area < np.array(full_area).mean() + 2.5 * dev:
             result.append(x)
 
     return result
@@ -179,7 +248,7 @@ def convertTranslation(translation, z, mag):
 
     return shift
 
-def combineEllipse(e1, e2, img1, disp, fname, points): #, disp_value, mag):
+def combineEllipse(e1, e2, img1, disp, fname, points, stereoCams): #, disp_value, mag):
     '''Combine left and right image ellipses
     into one image. Apply a shift dx and dy shift
     to the second set of ellipses to align on new image'''
@@ -188,23 +257,23 @@ def combineEllipse(e1, e2, img1, disp, fname, points): #, disp_value, mag):
     # Create a new list containing Ellipse class objects
     ellip1, ellip2 = [], []
 
-    for ellipse in e1:
-        e_1 = createEllipse(ellipse)
+    for e_1 in e1:
+        # e_1 = createEllipse(ellipse)
         ellip1.append(e_1)
         drawEllipse(img1, e_1, (0, 0, 255))
     
-    for ellipse in e2:
-        e_2_temp = createEllipse(ellipse)
-        y, x = round(e_2_temp.x), round(e_2_temp.y)
+    for e_2 in e2:
+        # e_2_temp = createEllipse(ellipse)
+        y, x = round(e_2.x), round(e_2.y)
 
         Tnorm = np.linalg.norm(stereoCams.T)
-        d = disp[x - 1][y - 1] #/ Tnorm
-        z = points[x- 1][y - 1][2] + stereoCams.T[2]
-        dx = d #abs(d * 2. * stereoCams.T[0]) + abs(stereoCams.T[1] * Tnorm)
-        dy = d #(d * stereoCams.T[1] * Tnorm) + stereoCams.T[0]
+        d = disp[x - 1][y - 1]
+        z = points[x- 1][y - 1][2]
+        dx = d + (abs(stereoCams.T[0]) * z) #(d + abs(stereoCams.T[0]))
+        dy = abs(stereoCams.T[0] * stereoCams.T[1]) #* z #d + z
         print dx, dy, disp[x - 1][y - 1], points[x - 1][y - 1][2]
 
-        e_2 = shiftEllipse(ellipse, dx, dy)
+        e_2 = shiftEllipse(e_2, dx, dy)
 
         ellip2.append(e_2)
         drawEllipse(img1, e_2, (0, 255, 0))
@@ -215,7 +284,7 @@ def combineEllipse(e1, e2, img1, disp, fname, points): #, disp_value, mag):
 
     return ellip1, ellip2
 
-def bestDetection(e, er, img1, disp_points, folder, z, disp_value):
+def bestDetection(e, er, img1, disp, folder, points, stereoCams):
 
     if folder != None:
         j_name = folder + '/joint_ellipse'
@@ -226,24 +295,12 @@ def bestDetection(e, er, img1, disp_points, folder, z, disp_value):
         b_name = 'best_ellipse'
         all_name = 'all_and_best'
 
-    mag_array = np.linspace(0.05, 1.0, num = 20)
-    results = []
-    for mag in mag_array:
-        e1, e2 = combineEllipse(e, er, img1.copy(), disp_points, j_name, z, disp_value, mag)
-        orig, match = matching(e1, e2)
-        results.append((orig, match))
-
-    max_match, index = 0., 0
-    for i in range(len(results)):
-        temp = len(results[i][1])
-
-        if temp >= max_match:
-            max_match = temp
-            index = i
+    e1, e2 = combineEllipse(e, er, img1.copy(), disp, j_name, points, stereoCams)
+    orig, match = matching(e1, e2)
     
-    orig, match = results[index][0], results[index][1]
+    # orig, match = results[index][0], results[index][1]
     best = best_guess(orig, match, img1.copy(), b_name)
-    print max_match
+    # print max_match
     return e1, e2, best
 
 
@@ -251,14 +308,21 @@ def matching(e1, e2):
     orig, matches = [], []
 
     for i in e1:
-        min_val = 15.
+        min_val = 40.
         match = None
 
         for j in e2:
             dist = distEllipse(i, j)
+            e1L, e1R = distEnd(i, j)
+            e2L, e2R = distEnd(j, i)
+            e11, e12, e21, e22 = distBothEnd(i, j)
 
-            if(dist < min_val):
-                dist = min_val
+            if(e11 < min_val) or (e12 < min_val) \
+                or (e21 < min_val) or (e22 < min_val):
+                match = j
+
+            if(dist < min_val) or (e1L < min_val) \
+                or (e2L < min_val) or (e1R < min_val) or (e2R < min_val):
                 match = j
 
         if(match is not None):
@@ -314,10 +378,10 @@ def test_debug():
     er, cts_r, a_R = compute_threshold(handlesR, r_img.copy(), hR_name)
 
     # disparity = get_disparity(h_img, r_img)
-    disp_pts, points, dvalue = disparity(h_img, r_img)
-    e1, e2, best = bestDetection(e, er, h_img.copy(), disp_pts, folder, points, dvalue)
+    # disp_pts, points, dvalue = disparity(h_img, r_img)
+    e1, e2, best = bestDetection(e, er, h_img.copy(), disp, folder, points, stereoCams)
 
-    e1, e2 = combineEllipse(e, er, h_img.copy(), disp, j_name, points)
+    e1, e2 = combineEllipse(e, er, h_img.copy(), disp, j_name, points, stereoCams)
     orig, match = matching(e1, e2)
     best = best_guess(orig, match, h_img.copy(), b_name)
     plot_all(e1, e2, best, h_img.copy(), all_name)
@@ -352,8 +416,8 @@ def multiTest():
 
         er, cts_r, a_R = compute_threshold(handlesR, r_img.copy(), hR_name)
 
-        disp_pts, points, dvalue = disparity(h_img, r_img)
-        e1, e2, best = bestDetection(e, er, h_img.copy(), disp_pts, folder, points, dvalue)
+        # disp_pts, points, dvalue = disparity(h_img, r_img)
+        e1, e2, best = bestDetection(e, er, h_img.copy(), disp, folder, points, stereoCams)
 
         # e1, e2 = combineEllipse(e, er, h_img.copy(), disp_pts, j_name, points, dvalue)
         # orig, match = matching(e1, e2)
