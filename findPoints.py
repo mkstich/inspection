@@ -5,7 +5,6 @@ import urllib
 import math
 import numpy.linalg as la
 from mpl_toolkits.mplot3d import Axes3D
-from main_test import *
 from stereo_calibrate import *
 from cannyEllipse import *
 
@@ -13,7 +12,7 @@ def determinePoints(stereoCams, ptsL, ptsR, dL, dR):
 
 	coordsL, coordsR = [], []
 	# Find Left Image World Coordinates
-	for e_1 in e1:
+	for e_1 in ptsL:
 		x, y = round(e_1.x), round(e_1.y)
 
 		if (x > 0. and y > 0.):
@@ -30,7 +29,7 @@ def determinePoints(stereoCams, ptsL, ptsR, dL, dR):
 			coordsL.append(np.array([X[0], Y[0], Z[0]]))
 
 	# Find Right Image World Coordinates
-	for e_2 in e2:
+	for e_2 in ptsR:
 		x, y = round(e_2.x), round(e_2.y)
 
 		if (x > 0. and y > 0.):
@@ -49,7 +48,7 @@ def determinePoints(stereoCams, ptsL, ptsR, dL, dR):
 	return coordsL, coordsR
 
 
-def createScatter(coordsL, coordsR, pred):
+def createScatter(coordsL, coordsR, pred, folder):
 	xL, yL, zL = [], [], []
 	xR, yR, zR = [], [], []
 	xP, yP, zP = [], [], []
@@ -83,15 +82,17 @@ def createScatter(coordsL, coordsR, pred):
 	ax.set_xlabel('X axis')
 	ax.set_ylabel('Y axis')
 	ax.set_zlabel('Z axis')
+	title = folder + ': ' + str(len(pred)) + ' Matches'
+	plt.title(title)
 
 	plt.legend(loc='upper left', numpoints=1, ncol=3, fontsize=8, bbox_to_anchor=(0, 0))
+	plt.savefig(folder + 'scatterPlot.png')
 
 	plt.show()
 
 
 def dist3D(e1, e2):
 	return np.sqrt((e1[0] - e2[0])**2 + (e1[1] - e2[1])**2 + (e1[2] - e2[2])**2)
-
 
 def calcDistances(coordsL, coordsR):
 	dist = []
@@ -106,7 +107,13 @@ def calcDistances(coordsL, coordsR):
 		dist.append(np.array(min_pair))
 
 	# Find the i, j pairs where dist < 200.
-	d2 = [i for i in dist if i[0] <= 200.]
+	print max(dist, key = lambda dist: dist[0])
+	limit = max(dist, key = lambda dist: dist[0])[0] / 2.5
+
+	if limit > 250.:
+		limit = 250.
+		
+	d2 = [i for i in dist if i[0] <= limit]
 	cL, cR = [], []
 	for i in d2:
 		cL.append(coordsL[int(i[1])])
@@ -125,7 +132,7 @@ def computeMeanDist(cL, cR):
 	return new_coords
 
 
-def calculate3DCloud(ptsL, ptsR, stereoCams, dL, dR):
+def calculate3DCloud(ptsL, ptsR, stereoCams, dL, dR, folder):
 	# determine 3D points
 	coordsL, coordsR = determinePoints(stereoCams, ptsL, ptsR, dL, dR)
 	cL, cR = calcDistances(coordsL, coordsR)
@@ -134,13 +141,12 @@ def calculate3DCloud(ptsL, ptsR, stereoCams, dL, dR):
 	predPoints = computeMeanDist(cL, cR)
 
 	# plot results
-	createScatter(cL, cR, predPoints)
+	createScatter(cL, cR, predPoints, folder)
 
-def findEllipses(stereoCams, folder):
+def findEllipses(stereoCams, folder, imsize):
 	imgL = cv2.imread(folder + '/left.jpeg')
 	imgR = cv2.imread(folder + '/right.jpeg')
-	r_imgL, r_imgR, disp, points = \
-		rectifyImage(imgL, imgR, imsize, stereoCams, folder + '/')
+	r_imgL, r_imgR = rectifyImage(imgL, imgR, imsize, stereoCams, folder + '/')
 
 	h1 = folder + '/handlesL'
 	h1_full = h1 + '.png'
@@ -171,17 +177,7 @@ def main():
     folders = ['Test '+ str(i) for i in range(1, 5)]
 
     for folder in folders:
-        e, er, h_img, r_img, = findEllipses(stereoCams, folder)
-        # dL, pointsL = computeDisparity(h_img, r_img, stereoCams)
-        # dR, pointsR = computeDisparity(r_img, h_img, stereoCams)
-        calculate3DCloud(e, er, stereoCams, dL, dR)
-
-# a = stereoCams.Q[3][2]
-# b = stereoCams.Q[3][3]
-# f = stereoCams.Q[2][3]
-# cx1 = stereoCams.P1[0][2]
-# cy1 = stereoCams.P1[1][2]
-
-# d = (f - Z * b) / (Z * a)
-# ix = X * (d * a + b) + cx1
-# iy = Y * (d * a + b) + cy1
+        e, er, h_img, r_img, = findEllipses(stereoCams, folder, imsize)
+        dL, pointsL = computeDisparity(h_img, r_img, stereoCams)
+        dR, pointsR = computeDisparity(r_img, h_img, stereoCams)
+        calculate3DCloud(e, er, stereoCams, dL, dR, folder)
