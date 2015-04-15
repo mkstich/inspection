@@ -5,6 +5,9 @@ import urllib
 import glob as glob
 import math
 import numpy.linalg as la
+import simplejson
+import pandas
+from collections import Counter
 from mpl_toolkits.mplot3d import Axes3D
 
 def drawMatches(img1, kp1, img2, kp2, matches, name):
@@ -100,18 +103,11 @@ def featureMatching(img1, img2, name):
 		# dst = cv2.perspectiveTransform(pts,M)
 
 	# plot the first 100 matches 
-	drawMatches(img1, kp1, img2, kp2, good[:100], name)
+	# drawMatches(img1, kp1, img2, kp2, good[:100], name)
 
-	return M, src_pts, dst_pts
+	return M #, src_pts, dst_pts
 
-def detAttitude(H, M, ar, ap, ay):
-	''' Gary Bradski's OpenCV Textbook method 
-	http://www.cs.haifa.ac.il/~dkeren/ip/OReilly-LearningOpenCV.pdf
-	Used formulas from Ch. 11 pg. 389 'What's under the hood?'
-
-	H = Homography matrix
-	M = camera matrix
-	'''
+def calcR(H, M):
 	h1 = H[:, 0]
 	h2 = H[:, 1]
 	h3 = H[:, 2]
@@ -132,8 +128,21 @@ def detAttitude(H, M, ar, ap, ay):
 	# translation vector
 	t = np.dot(lda, np.dot(np.linalg.inv(M), h3))
 
+	return R
+
+def detAttitude(HL, ML, HR, MR, ar, ap, ay):
+	''' Gary Bradski's OpenCV Textbook method 
+	http://www.cs.haifa.ac.il/~dkeren/ip/OReilly-LearningOpenCV.pdf
+	Used formulas from Ch. 11 pg. 389 'What's under the hood?'
+
+	H = Homography matrix
+	M = camera matrix
+	'''
+	R_L = calcR(HL, ML)
+	R_R = calcR(HR, MR)
+
 	# r, p, y = 
-	return calcAngles(R, ar, ap, ay)
+	return calcAngles(R_R, R_L, ar, ap, ay)
 
 	# return r, p, y, R
 
@@ -164,6 +173,7 @@ def PYR(R):
 
 def YPR(R):
 	r11, r12, r13, r21, r22, r23, r31, r32, r33 = R.flat
+
 	pitch = np.round(math.degrees(math.asin(-r23)), 4)
 	roll = np.round(math.degrees(math.atan2(r21, r22)), 4)
 	yaw = np.round(math.degrees(math.atan2(r13, r33)), 4)
@@ -172,9 +182,21 @@ def YPR(R):
 
 def YRP(R):
 	r11, r12, r13, r21, r22, r23, r31, r32, r33 = R.flat
-	pitch = np.round(math.degrees(math.atan2(-r23, r22)), 4)
-	roll = np.round(math.degrees(math.asin(r21)),4 )
-	yaw = np.round(math.degrees(math.atan2(-r31, r11)), 4)
+	if r21 > 0.998:
+		yaw = np.round(math.degrees(math.atan2(r13, r33)), 4)
+		roll = np.round(math.degrees(math.pi / 2.), 4)
+		pitch = 0.0
+
+	# if sinularity at south pole
+	elif r21 < -0.998:
+		yaw = np.round(math.degrees(math.atan2(r13, r33)), 4)
+		roll = np.round(math.degrees(math.pi / 2.), 4)
+		bank = 0.
+
+	else:
+		yaw = np.round(math.degrees(math.atan2(-r31, r11)), 4)
+		roll = np.round(math.degrees(math.asin(r21)), 4)
+		pitch = np.round(math.degrees(math.atan2(-r23, r22)), 4)
 
 	return pitch, roll, yaw
 
@@ -194,7 +216,14 @@ def RPY(R):
 
 	return pitch, roll, yaw
 
-def calcAngles(R, ar, ap, ay):
+def meanAngle(rr, rl, pr, pl, yr, yl):
+	r1 = np.round(np.mean([rr, rl]), 4)
+	p1 = np.round(np.mean([pr, pl]), 4)
+	y1 = np.round(np.mean([yr, yl]), 4)
+
+	return r1, p1, y1
+
+def calcAngles(R_R, R_L, ar, ap, ay):
 	'''
 	heading = theta = yaw (about y)
 	bank = psi = pitch (about x)
@@ -226,18 +255,21 @@ def calcAngles(R, ar, ap, ay):
 		# roll = np.round(math.degrees(math.atan2(r32, r33)), 4)
 		# pitch = np.round(math.degrees(math.atan2(-r31, np.sqrt(r11**2 + r21**2))), 4)
 # ###########################################################################################33
-	# ar = 3.
-	# ap = 0.
-	# ay = 1.
-	# print 'Pitch Roll Yaw *'
+
 	results = []
-	p1, r1, y1 = PRY(R)
-	e1 = error(ar, r1, ap, p1, ay, y1)
-	# print p1, r1, y1, e1
-	results.append([r1, p1, y1, e1, 'PRY'])
+	#********************************************
+	# pr, rr, yr = PRY(R_R)
+	# pl, rl, yl = PRY(R_L)
+	# r1, p1, y1 = meanAngle(rr, rl, pr, pl, yr, yl)
+	# e1 = error(ar, r1, ap, p1, ay, y1)
+	# # print p1, r1, y1, e1
+	# results.append([r1, p1, y1, e1, 'PRY'])
+	#********************************************
 
 	# print 'Pitch Yaw Roll'
-	# p2, r2, y2 = PYR(R)
+	# pr, rr, yr = PYR(R_R)
+	# pl, rl, yl = PYR(R_L)
+	# r2, p2, y2 = meanAngle(rr, rl, pr, pl, yr, yl)
 	# e2 = error(ar, r2, ap, p2, ay, y2)
 	# # print p2, r2, y2, e2
 	# results.append([r2, p2, y2, e2, 'PYR'])
@@ -249,31 +281,40 @@ def calcAngles(R, ar, ap, ay):
 	# results.append([r3, p3, y3, e3, 'YPR'])
 
 	# # print 'Yaw Roll Pitch'
-	# p4, r4, y4 = YPR(R)
-	# e4 = error(ar, r4, ap, p4, ay, y4)
-	# # print p4, r4, y4, e4
-	# results.append([r4, p4, y4, e4, 'YRP'])
+	pr, rr, yr = YRP(R_R)
+	pl, rl, yl = YRP(R_L)
+	r4, p4, y4 = meanAngle(rr, rl, pr, pl, yr, yl)
+	e4 = error(ar, r4, ap, p4, ay, y4)
+	# print p4, r4, y4, e4
+	results.append([r4, p4, y4, e4, 'YRP'])
 
 	# print 'Roll Yaw Pitch'
-	p5, r5, y5 = RYP(R)
-	e5 = error(ar, r5, ap, p5, ay, y5)
-	# print p5, r5, y5, e5
-	results.append([r5, p5, y5, e5, 'RYP'])
+	#********************************************
 
-	# print 'Roll Pitch Yaw'
-	p6, r6, y6 = RPY(R)
-	e6 = error(ar, r6, ap, p6, ay, y6)
-	# print p6, r6, y6, e6
-	results.append([r6, p6, y6, e6, 'RPY'])
+	# pr, rr, yr = RYP(R_R)
+	# pl, rl, yl = RYP(R_L)
+	# r5, p5, y5 = meanAngle(rr, rl, pr, pl, yr, yl)
+	# e5 = error(ar, r5, ap, p5, ay, y5)
+	# # print p5, r5, y5, e5
+	# results.append([r5, p5, y5, e5, 'RYP'])
 
-	results = sorted(results, key = lambda results: results[3], reverse = True)
+	# # # print 'Roll Pitch Yaw'
+	# pr, rr, yr = RPY(R_R)
+	# pl, rl, yl = RPY(R_L)
+	# r6, p6, y6 = meanAngle(rr, rl, pr, pl, yr, yl)
+	# e6 = error(ar, r6, ap, p6, ay, y6)
+	# # print p6, r6, y6, e6
+	# results.append([r6, p6, y6, e6, 'RPY'])
+
+	# results = sorted(results, key = lambda results: results[3], reverse = True)
 	##################################################################
 	# print 'Euler yaw =', yaw, ' pitch = ', pitch, ' roll = ', roll
-	return results[-1]
+	return results #[-1]
 	# return roll, pitch, yaw
 
 def findBest():
-	imgs = glob.glob('attitudeTracking/small/l*.jpeg')
+	imgsL = glob.glob('attitudeTracking/small/l*.jpeg')
+	imgsR = glob.glob('attitudeTracking/small/r*.jpeg')
 	values = np.array([[-146., 160., -18.], 
 			[-146., 162., -18.],
 			[-143., 162., -18.],
@@ -284,42 +325,76 @@ def findBest():
        [  0.00000000e+00,   1.70664233e+03,   5.45250506e+02],
        [  0.00000000e+00,   0.00000000e+00,   1.00000000e+00]])
 
+	M_camR = np.array([[  1.89292737e+03,   0.00000000e+00,   9.17130175e+02],
+       [  0.00000000e+00,   2.09561499e+03,   5.37271880e+02],
+       [  0.00000000e+00,   0.00000000e+00,   1.00000000e+00]])
+
 	results = []
-	for img1Name, val1 in zip(imgs, values):
-		img1 = cv2.imread(img1Name, 0)
+	i = 1
+	for img1L_name, img1R_name, val1 in zip(imgsL, imgsR, values):
+		img1L = cv2.imread(img1L_name, 0)
+		img1R = cv2.imread(img1R_name, 0)
+		j = 1
 
-		for img2Name, val2 in zip(imgs, values):
-			img2 = cv2.imread(img2Name, 0)
+		for img2L_name, img2R_name, val2 in zip(imgsL, imgsR, values):
+			img2L = cv2.imread(img2L_name, 0)
+			img2R = cv2.imread(img2R_name, 0)
 			ar, ap, ay = val1 - val2
-			H, src_pts, dst_pts = featureMatching(img1, img2, 'matches.png')
-			results.append(detAttitude(H, M_camL, ar, ap, ay))
 
-	r_arr = np.array(results)
-	names = r_arr[:,-1]
-	counts = Counter(names.tolist())
-	print counts
+			nameL = 'attitudeTracking/small_matches/matchesL' + str(i) + str(j) + '.png'
+			nameR = 'attitudeTracking/small_matches/matchesR' + str(i) + str(j) + '.png'
 
-	df = pandas.DataFrame.from_dict(counts, orient = 'index')
-	df.plot(kind = 'bar')
-	plt.savefig('rotation_error.png')
-	plt.show()
+			HR = featureMatching(img1R, img2R, nameR)
+			HL = featureMatching(img1L, img2L, nameL)
+			results.append(detAttitude(HL, M_camL, HR, M_camR, ar, ap, ay))
+			j += 1
+		i += 1
+
+	# r_arr = np.array(results)
+	# names = r_arr[:,-1]
+	# counts = Counter(names.tolist())
+	# print counts
+
+	# # plot bar graph of Euler method used
+	# df = pandas.DataFrame.from_dict(counts, orient = 'index')
+	# df.plot(kind = 'bar')
+	# plt.savefig('rotation_error.png')
+	# plt.show()
+
+	# write results to text file
+	f = open('attitudeTracking/small_matches/YRP.txt', 'w')
+	simplejson.dump(results, f)
+	f.close()
 
 	return results
 
 def main():
-	img1 = cv2.imread('attitudeTracking/small/l1.jpeg', 0)
-	img2 = cv2.imread('attitudeTracking/small/l2.jpeg', 0)
-	H_main, src_pts, dst_pts = featureMatching(img1, img2, 'matches.png')
+	M_camL = np.array([[  1.78586597e+03,   0.00000000e+00,   9.15499196e+02],
+       [  0.00000000e+00,   1.70664233e+03,   5.45250506e+02],
+       [  0.00000000e+00,   0.00000000e+00,   1.00000000e+00]])
 
-	img1R = cv2.imread('attitudeTracking/multipleAngles/r2.jpeg',0) # queryImage
-	img2R = cv2.imread('attitudeTracking/multipleAngles/r3.jpeg',0) # trainImage
-	HR, src_pts_r, dst_pts_r = featureMatching(img1R, img2R, 'matchesR.jpeg')
+	M_camR = np.array([[  1.89292737e+03,   0.00000000e+00,   9.17130175e+02],
+       [  0.00000000e+00,   2.09561499e+03,   5.37271880e+02],
+       [  0.00000000e+00,   0.00000000e+00,   1.00000000e+00]])
+
+	img1L = cv2.imread('attitudeTracking/small/l1.jpeg', 0)
+	img2L = cv2.imread('attitudeTracking/small/l2.jpeg', 0)
+	HL = featureMatching(img1L, img2L, 'matches.png')
+
+	img1R = cv2.imread('attitudeTracking/small/r1.jpeg',0) # queryImage
+	img2R = cv2.imread('attitudeTracking/small/r2.jpeg',0) # trainImage
+	HR = featureMatching(img1R, img2R, 'matchesR.jpeg')
+
+	ar = 0.
+	ap = -2.
+	ay = 0.
+	detAttitude(HL, M_camL, HR, M_camR, ar, ap, ay)
 
 	img1L = cv2.imread('attitudeTracking/multipleAngles/l1.jpeg',0) # queryImage
 	img2L = cv2.imread('attitudeTracking/multipleAngles/l2.jpeg',0) # trainImage
 
 	# compute the feature matching, calculate the homography matrix
-	HL, src_pts_l, dst_pts_l = featureMatching(img1L, img2L, 'matchesL.jpeg')
+	HL = featureMatching(img1L, img2L, 'matchesL.jpeg')
 
 
 	# M = np.array([[  1.78586597e+03,   0.00000000e+00,   9.60000000e+02],
@@ -328,13 +403,7 @@ def main():
 	# K = np.array([[  1.78586597e+03,   0.00000000e+00,   9.60000000e+02],
 	#        [  0.00000000e+00,   1.70664233e+03,   5.52500000e+02],
 	#        [  0.00000000e+00,   0.00000000e+00,   1.00000000e+00]])
-	M_camL = np.array([[  1.78586597e+03,   0.00000000e+00,   9.15499196e+02],
-       [  0.00000000e+00,   1.70664233e+03,   5.45250506e+02],
-       [  0.00000000e+00,   0.00000000e+00,   1.00000000e+00]])
 
-	M_camR = np.array([[  1.89292737e+03,   0.00000000e+00,   9.17130175e+02],
-       [  0.00000000e+00,   2.09561499e+03,   5.37271880e+02],
-       [  0.00000000e+00,   0.00000000e+00,   1.00000000e+00]])
 	# OpenCV Homography decomposition method
 	print 'OpenCv Homography Decomposition'
 	print 'Left'
