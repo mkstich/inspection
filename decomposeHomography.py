@@ -2,26 +2,13 @@ import cv2
 import numpy as np
 import matplotlib.pyplot as plt
 import urllib
+import glob as glob
 import math
 import numpy.linalg as la
 from mpl_toolkits.mplot3d import Axes3D
 
-def drawMatches(img1, kp1, img2, kp2, matches):
+def drawMatches(img1, kp1, img2, kp2, matches, name):
     """
-    My own implementation of cv2.drawMatches as OpenCV 2.4.9
-    does not have this function available but it's supported in
-    OpenCV 3.0.0
-
-    This function takes in two images with their associated 
-    keypoints, as well as a list of DMatch data structure (matches) 
-    that contains which keypoints matched in which images.
-
-    An image will be produced where a montage is shown with
-    the first image followed by the second image beside it.
-
-    Keypoints are delineated with circles, while lines are connected
-    between matching keypoints.
-
     img1,img2 - Grayscale images
     kp1,kp2 - Detected list of keypoints through any of the OpenCV keypoint 
               detection algorithms
@@ -71,12 +58,12 @@ def drawMatches(img1, kp1, img2, kp2, matches):
 
 
     # Show the image
-    cv2.imshow('Matched Features', out)
-    cv2.imwrite('matches.png', out)
+    # cv2.imshow('Matched Features', out)
+    cv2.imwrite(name, out)
     cv2.waitKey(0)
     cv2.destroyAllWindows()
 
-def featureMatching(img1, img2):
+def featureMatching(img1, img2, name):
 	MIN_MATCH_COUNT = 10
 
 	# Initiate SIFT detector
@@ -89,7 +76,7 @@ def featureMatching(img1, img2):
 	# FLANN parameters
 	FLANN_INDEX_KDTREE = 0
 	index_params = dict(algorithm = FLANN_INDEX_KDTREE, trees = 5)
-	search_params = dict(checks=50)   # or pass empty dictionary
+	search_params = dict()#(checks=50)   # or pass empty dictionary
 
 	flann = cv2.FlannBasedMatcher(index_params,search_params)
 
@@ -108,13 +95,16 @@ def featureMatching(img1, img2):
 		# calculate the homography matrix
 		M, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 5.0)
 		matchesMask = mask.ravel().tolist()
+		# h, w = img1.shape
+		# pts = np.float32([ [0,0],[0,h-1],[w-1,h-1],[w-1,0] ]).reshape(-1,1,2)
+		# dst = cv2.perspectiveTransform(pts,M)
 
 	# plot the first 100 matches 
-	drawMatches(img1, kp1, img2, kp2, good[:100])
+	drawMatches(img1, kp1, img2, kp2, good[:100], name)
 
 	return M, src_pts, dst_pts
 
-def detAttitude(H, M):
+def detAttitude(H, M, ar, ap, ay):
 	''' Gary Bradski's OpenCV Textbook method 
 	http://www.cs.haifa.ac.il/~dkeren/ip/OReilly-LearningOpenCV.pdf
 	Used formulas from Ch. 11 pg. 389 'What's under the hood?'
@@ -122,246 +112,215 @@ def detAttitude(H, M):
 	H = Homography matrix
 	M = camera matrix
 	'''
-
-	h1 = np.array([[H[0][0]], [H[1][0]], [H[2][0]]])
-	h2 = np.array([[H[0][1]], [H[1][1]], [H[2][1]]])
-	h3 = np.array([[H[0][2]], [H[1][2]], [H[2][2]]])
+	h1 = H[:, 0]
+	h2 = H[:, 1]
+	h3 = H[:, 2]
 	
 	# calculate the scaling factor, lda
-	b11, b12, b13, b12, b22, b23, b13, b23, b33 = np.dot(la.inv(M.T), la.inv(M)).flat
-	cy = (b12 * b13 - b11 * b23) / (b11*b22 - b12**2)
-	lda = b33 - (b13**2 + cy * (b12 * b13 - b11 * b23)) / b11
+	lda = 1. / la.norm(h1)#np.dot(la.inv(M), h1))
 
 	# compute the components of the rotation matrix
 	r1 = np.dot(lda, np.dot(np.linalg.inv(M), h1))
 	r2 = np.dot(lda, np.dot(np.linalg.inv(M), h2))
-	r3 = np.cross(r1.ravel(), r2.ravel())
+	r3 = np.cross(r1, r2)
 
-	r3 = np.array([[r3[0]], [r3[1]], [r3[2]]])
+	R = np.array([r1, r2, r3])
 
-	R = np.hstack([r1, r2, r3])
+	# U, S, Vt = la.svd(R)
+	# R = np.dot(U, Vt)
 
 	# translation vector
 	t = np.dot(lda, np.dot(np.linalg.inv(M), h3))
 
-	# U, S, Vt = np.linalg.svd(R)
+	# r, p, y = 
+	return calcAngles(R, ar, ap, ay)
 
-	# # if round(la.det(U), 4) == -1.:
-	# # 	U = -U
-	# # 	Vt = -Vt
+	# return r, p, y, R
 
-	# D = np.identity(len(S))
+def error(ar, r, ap, p, ay, y):
+	e1 = np.abs(ar - r)
+	e2 = np.abs(ap - p)
+	e3 = np.abs(ay - y)
 
-	# R2 = np.dot(U, np.dot(D, Vt))
-	r, p, y = calcAngles(R)
+	return np.mean([e1, e2, e3])
+	# return np.mean(np.abs((ar - np.abs(r))) + np.abs((ap - np.abs(p))) + \
+		# np.abs(ay - np.abs(y)))
 
+def PRY(R):
+	r11, r12, r13, r21, r22, r23, r31, r32, r33 = R.flat
+	pitch = np.round(math.degrees(math.atan2(r32, r22)), 4)
+	roll = np.round(math.degrees(math.asin(r13)), 4)
+	yaw = np.round(math.degrees(math.atan2(r13, r11)), 4)
 
+	return pitch, roll, yaw
 
-def newAttitude(HL):
-	'''UCLA Method (Ch. 5)
-	http://vision.ucla.edu//MASKS/MASKS-ch5.pdf
-	Used Ch.5 pg. 131 - 138
-	'''
+def PYR(R):
+	r11, r12, r13, r21, r22, r23, r31, r32, r33 = R.flat
+	pitch = np.round(math.degrees(math.atan2(-r23, r33)), 4)
+	roll = np.round(math.degrees(math.atan2(-r12, r11)), 4)
+	yaw = np.round(math.degrees(math.asin(r13)), 4)
 
-	U, S, Vt = la.svd(HL)
-	sig2 = sorted(S)[1]
+	return pitch, roll, yaw
 
-	H = HL / sig2
-	V, S, Vt = la.svd(np.dot(H.T, H))
+def YPR(R):
+	r11, r12, r13, r21, r22, r23, r31, r32, r33 = R.flat
+	pitch = np.round(math.degrees(math.asin(-r23)), 4)
+	roll = np.round(math.degrees(math.atan2(r21, r22)), 4)
+	yaw = np.round(math.degrees(math.atan2(r13, r33)), 4)
 
-	if(la.det(V) == -1.):
-		V = -V
-		Vt = -Vt
+	return pitch, roll, yaw
 
-	sig1_sq, sig3_sq = S[0], S[2]
-	v1 = np.array([[V[0][0]], [V[1][0]], [V[2][0]]])
-	v2 = np.array([[V[0][1]], [V[1][1]], [V[2][1]]])
-	v3 = np.array([[V[0][2]], [V[1][2]], [V[2][2]]])
+def YRP(R):
+	r11, r12, r13, r21, r22, r23, r31, r32, r33 = R.flat
+	pitch = np.round(math.degrees(math.atan2(-r23, r22)), 4)
+	roll = np.round(math.degrees(math.asin(r21)),4 )
+	yaw = np.round(math.degrees(math.atan2(-r31, r11)), 4)
 
-	u1_n = np.dot(v1, np.sqrt(1. - sig3_sq)) + np.dot(v3, np.sqrt(sig1_sq - 1.))
-	u1_d = np.sqrt(sig1_sq - sig3_sq)
-	u1 = u1_n / u1_d
+	return pitch, roll, yaw
 
-	u2_n = np.dot(v1, np.sqrt(1. - sig3_sq)) - np.dot(v3, np.sqrt(sig1_sq - 1.))
-	u2_d = u1_d
-	u2 = u2_n / u2_d
+def RYP(R):
+	r11, r12, r13, r21, r22, r23, r31, r32, r33 = R.flat
+	pitch = np.round(math.degrees(math.atan2(r32, r33)), 4)
+	roll = np.round(math.degrees(math.atan2(r21, r11)), 4)
+	yaw = np.round(math.degrees(math.asin(-r31)), 4)
 
-	v2_hat = v2 / la.norm(v2)
-	new_u13 = np.cross(v2_hat.ravel(), u1.ravel())
-	new_u23 = np.cross(v2_hat.ravel(), u2.ravel())
+	return pitch, roll, yaw
 
-	U1 = np.hstack([v2, u1, np.array([[new_u13[0]], [new_u13[1]], [new_u13[2]]])])
-	U2 = np.hstack([v2, u2, np.array([[new_u23[0]], [new_u23[1]], [new_u23[2]]])])
+def RPY(R):
+	r11, r12, r13, r21, r22, r23, r31, r32, r33 = R.flat
+	pitch = np.round(math.degrees(math.asin(r32)), 4)
+	roll = np.round(math.degrees(math.atan2(-r12, r22)), 4)
+	yaw = np.round(math.degrees(math.atan2(-r31, r33)), 4)
 
-	new_W13 = np.cross(np.dot(H, v2_hat).ravel(), np.dot(H, u1).ravel())
-	new_W23 = np.cross(np.dot(H, v2_hat).ravel(), np.dot(H, u2).ravel())
-	
-	W1 = np.hstack([np.dot(H, v2), np.dot(H, u1), \
-		np.array([[new_W13[0]], [new_W13[1]], [new_W13[2]]])])
-	W2 = np.hstack([np.dot(H, v2), np.dot(H, u2), \
-		np.array([[new_W23[0]], [new_W23[1]], [new_W23[2]]])])
+	return pitch, roll, yaw
 
-	R1 = np.dot(W1, U1.T)
-	R2 = np.dot(W2, U2.T)
-
-	calcAngles(R1)
-	calcAngles(R2)
-
-
-
-def paperAttitude(H):
-	'''Method from 'Deeper Understanding of the homography decomposition
-	for vision based control' 
-	Used the Zhang SVD - Based composition method on pg. 9
-	https://hal.archives-ouvertes.fr/file/index/docid/174739/filename/RR-6303.pdf
-	'''
-	V, S, Vt = la.svd(np.dot(H.T, H))
-	v1 = np.array([[V[0][0]], [V[1][0]], [V[2][0]]])
-	v2 = np.array([[V[0][1]], [V[1][1]], [V[2][1]]])
-	v3 = np.array([[V[0][2]], [V[1][2]], [V[2][2]]])
-	sig1, sig3 = np.sqrt(S[0]), np.sqrt(S[2])
-
-	lda1 = (1. / (2. * sig1 * sig3)) * (-1. + np.sqrt(1. + 4.*(sig1 * sig3) / ((sig1 - sig3)**2)))
-	lda3 = (1. / (2. * sig1 * sig3)) * (-1. - np.sqrt(1. + 4.*(sig1 * sig3) / ((sig1 - sig3)**2)))
-
-	v1_norm = np.sqrt(lda1 * lda1 * ((sig1 - sig3)**2) + 2 * lda1 * (sig1 * sig3 - 1.) + 1.)
-	v3_norm = np.sqrt(lda3 * lda3 * ((sig1 - sig3)**2) + 2 * lda3 * (sig1 * sig3 - 1.) + 1.)
-
-	v1_p = np.dot(v1_norm, v1)
-	v3_p = np.dot(v3_norm, v3)
-
-	t_star = (v1_p + v3_p) / (lda1 - lda3)
-	n = (np.dot(lda1, v3_p) + np.dot(lda3, v1_p)) / (lda1 - lda3)
-
-	R = np.dot(H, la.inv(np.identity(3) + np.dot(t_star, n.T)))
-
-	calcAngles(R)
-
-
-def calcAngles(R):
+def calcAngles(R, ar, ap, ay):
 	'''
 	heading = theta = yaw (about y)
 	bank = psi = pitch (about x)
 	attitude = phi = roll (about z)
+
+	EDGE rotation matrixes will be in the order of operations
+	of pitch, yaw, roll
 	'''
-	r11, r12, r13, r21, r22, r23, r31, r32, r33 = R.flat
 
-	# heading = math.atan2(-r31, r11)
-	# bank = math.atan2(-r23, r22)
-	# attitude = math.asin(r21)
-
-	# heading = math.asin(-r31)
-	# cy = math.cos(heading)
-
-	# if cy > 0.:
-	# 	attitude = math.atan2(r21, r11) #(r11, r21)
-	# 	bank = math.atan2(r32, r33) #(r33, r32)
-	# else:
-	# 	attitude = math.atan2(-r11, -r21)
-	# 	bank = math.atan2(-r33, -r32)
-
-	# yaw = np.round(math.degrees(heading), 5)
-	# pitch = np.round(math.degrees(bank), 5)
-	# roll = np.round(math.degrees(attitude), 5)
-	# print 'r = ', roll, 'p = ', pitch, 'y = ', yaw
-
-	'''Order of Euler Angles: heading, attitude, bank'''
+	'''Order of Euler Angles: pitch, yaw, roll'''
 	# if singularity at the north pole
-	if r21 > 0.998:
-		yaw = np.round(math.degrees(math.atan2(r13, r33)), 4)
-		roll = np.round(math.degrees(math.pi / 2.), 4)
-		pitch = 0.0
+	# if r21 > 0.998:
+	# 	yaw = np.round(math.degrees(math.atan2(r13, r33)), 4)
+	# 	roll = np.round(math.degrees(math.pi / 2.), 4)
+	# 	pitch = 0.0
 
-	# if sinularity at south pole
-	elif r21 < -0.998:
-		yaw = np.round(math.degrees(math.atan2(r13, r33)), 4)
-		roll = np.round(math.degrees(math.pi / 2.), 4)
-		bank = 0.
+	# # if sinularity at south pole
+	# elif r21 < -0.998:
+	# 	yaw = np.round(math.degrees(math.atan2(r13, r33)), 4)
+	# 	roll = np.round(math.degrees(math.pi / 2.), 4)
+	# 	bank = 0.
 
-	else:
-		yaw = np.round(math.degrees(math.atan2(-r31, r11)), 4)
-		roll = np.round(math.degrees(math.asin(r21)), 4)
-		pitch = np.round(math.degrees(math.atan2(-r23, r22)), 4)
+	# else:
+	# 	yaw = np.round(math.degrees(math.atan2(-r31, r11)), 4)
+	# 	roll = np.round(math.degrees(math.asin(r21)), 4)
+	# 	pitch = np.round(math.degrees(math.atan2(-r23, r22)), 4)
 
-	print 'Euler yaw =', yaw, ' pitch = ', pitch, ' roll = ', roll
-	return roll, pitch, yaw
+		# yaw = np.round(math.degrees(math.atan2(r21, r11)), 4)
+		# roll = np.round(math.degrees(math.atan2(r32, r33)), 4)
+		# pitch = np.round(math.degrees(math.atan2(-r31, np.sqrt(r11**2 + r21**2))), 4)
+# ###########################################################################################33
+	# ar = 3.
+	# ap = 0.
+	# ay = 1.
+	# print 'Pitch Roll Yaw *'
+	results = []
+	p1, r1, y1 = PRY(R)
+	e1 = error(ar, r1, ap, p1, ay, y1)
+	# print p1, r1, y1, e1
+	results.append([r1, p1, y1, e1, 'PRY'])
 
+	# print 'Pitch Yaw Roll'
+	# p2, r2, y2 = PYR(R)
+	# e2 = error(ar, r2, ap, p2, ay, y2)
+	# # print p2, r2, y2, e2
+	# results.append([r2, p2, y2, e2, 'PYR'])
 
-def firstMethod(H):
-	# Get a symmetric matrix
-	S = np.dot(H.T, H) - np.identity(3)
-	s11, s12, s13, s12, s22, s23, s13, s23, s33 = S.flat
+	# print 'Yaw Pitch Roll'
+	# p3, r3, y3 = YPR(R)
+	# e3 = error(ar, r3, ap, p3, ay, y3)
+	# # print p3, r3, y3, e3
+	# results.append([r3, p3, y3, e3, 'YPR'])
 
-	Ms11 = la.det(np.array([[s22, s23], [s23, s33]]))
-	Ms11 *= np.sign(Ms11)
-	Ms22 = la.det(np.array([[s11, s13], [s13, s33]]))
-	Ms22 *= np.sign(Ms22)
-	Ms33 = la.det(np.array([[s11, s12], [s12, s22]]))
-	Ms33 *= np.sign(Ms33)
+	# # print 'Yaw Roll Pitch'
+	# p4, r4, y4 = YPR(R)
+	# e4 = error(ar, r4, ap, p4, ay, y4)
+	# # print p4, r4, y4, e4
+	# results.append([r4, p4, y4, e4, 'YRP'])
 
-	Ms12 = - la.det(np.array([[s12, s13], [s23, s33]]))
-	Ms13 = - la.det(np.array([[s12, s13], [s22, s23]]))
-	Ms23 = - la.det(np.array([[s11, s13], [s12, s23]]))
-	Ms21 = Ms12
-	Ms31 = Ms13
-	Ms32 = Ms23
+	# print 'Roll Yaw Pitch'
+	p5, r5, y5 = RYP(R)
+	e5 = error(ar, r5, ap, p5, ay, y5)
+	# print p5, r5, y5, e5
+	results.append([r5, p5, y5, e5, 'RYP'])
 
-	naP_s11 = np.array([[s11], [s12 + np.sqrt(Ms33)], [s13 + np.sign(Ms23) * np.sqrt(Ms22)]])
-	naP_s22 = np.array([[s12 + np.sqrt(Ms33)], [s22], [s23 - np.sign(Ms13) * np.sqrt(Ms11)]])
-	naP_s33 = np.array([[s13 + np.sign(Ms12) * np.sqrt(Ms22)], [s23 + np.sqrt(Ms11)], [s33]])
+	# print 'Roll Pitch Yaw'
+	p6, r6, y6 = RPY(R)
+	e6 = error(ar, r6, ap, p6, ay, y6)
+	# print p6, r6, y6, e6
+	results.append([r6, p6, y6, e6, 'RPY'])
 
-	nbP_s11 = np.array([[s11], [s12 - np.sqrt(Ms33)], [s13 - np.sign(Ms23) * np.sqrt(Ms22)]])
-	nbP_s22 = np.array([[s12 - np.sqrt(Ms33)], [s22], [s23 + np.sign(Ms13) * np.sqrt(Ms11)]])
-	nbP_s33 = np.array([[s13 - np.sign(Ms12) * np.sqrt(Ms22)], [s23 - np.sqrt(Ms11)], [s33]])
+	results = sorted(results, key = lambda results: results[3], reverse = True)
+	##################################################################
+	# print 'Euler yaw =', yaw, ' pitch = ', pitch, ' roll = ', roll
+	return results[-1]
+	# return roll, pitch, yaw
 
-	# calculate the normals
-	na_s11 = naP_s11 / la.norm(naP_s11)
-	na_s22 = naP_s22 / la.norm(naP_s22)
-	na_s33 = naP_s33 / la.norm(naP_s33)
+def findBest():
+	imgs = glob.glob('attitudeTracking/small/l*.jpeg')
+	values = np.array([[-146., 160., -18.], 
+			[-146., 162., -18.],
+			[-143., 162., -18.],
+			[-143., 162., -19.],
+			[-143., 162., -19.],
+			[-143., 162., -19.]])
+	M_camL = np.array([[  1.78586597e+03,   0.00000000e+00,   9.15499196e+02],
+       [  0.00000000e+00,   1.70664233e+03,   5.45250506e+02],
+       [  0.00000000e+00,   0.00000000e+00,   1.00000000e+00]])
 
-	nb_s11 = nbP_s11 / la.norm(nbP_s11)
-	nb_s22 = nbP_s22 / la.norm(nbP_s22)
-	nb_s33 = nbP_s33 / la.norm(nbP_s33)
+	results = []
+	for img1Name, val1 in zip(imgs, values):
+		img1 = cv2.imread(img1Name, 0)
 
-	nu = 2. * np.sqrt(1 + np.trace(S) - Ms11 - Ms22 - Ms33)
-	rho = np.sqrt(2 + np.trace(S) + nu)
-	te_norm = np.sqrt(2 + np.trace(S) - nu)
+		for img2Name, val2 in zip(imgs, values):
+			img2 = cv2.imread(img2Name, 0)
+			ar, ap, ay = val1 - val2
+			H, src_pts, dst_pts = featureMatching(img1, img2, 'matches.png')
+			results.append(detAttitude(H, M_camL, ar, ap, ay))
 
-	# calculate translation vectors
-	ta_s11 = 0.5 * te_norm * (np.sign(s11) * np.dot(rho, nb_s11) - np.dot(te_norm, na_s11))
-	ta_s22 = 0.5 * te_norm * (np.sign(s22) * np.dot(rho, nb_s22) - np.dot(te_norm, na_s22))
-	ta_s33 = 0.5 * te_norm * (np.sign(s33) * np.dot(rho, nb_s33) - np.dot(te_norm, na_s33))
+	r_arr = np.array(results)
+	names = r_arr[:,-1]
+	counts = Counter(names.tolist())
+	print counts
 
-	tb_s11 = 0.5 * te_norm * (np.sign(s11) * np.dot(rho, na_s11) - np.dot(te_norm, nb_s11))
-	tb_s22 = 0.5 * te_norm * (np.sign(s22) * np.dot(rho, na_s22) - np.dot(te_norm, nb_s22))
-	tb_s33 = 0.5 * te_norm * (np.sign(s33) * np.dot(rho, na_s33) - np.dot(te_norm, nb_s33))
+	df = pandas.DataFrame.from_dict(counts, orient = 'index')
+	df.plot(kind = 'bar')
+	plt.savefig('rotation_error.png')
+	plt.show()
 
-	Ra_s11 = np.dot(H, (np.identity(3) - (2. / rho) * np.dot(ta_s11, na_s11.T)))
-	Ra_s22 = np.dot(H, (np.identity(3) - (2. / rho) * np.dot(ta_s22, na_s22.T)))
-	Ra_s33 = np.dot(H, (np.identity(3) - (2. / rho) * np.dot(ta_s33, na_s33.T)))
-
-	Rb_s11 = np.dot(H, (np.identity(3) - (2. / rho) * np.dot(tb_s11, nb_s11.T)))
-	Rb_s22 = np.dot(H, (np.identity(3) - (2. / rho) * np.dot(tb_s22, nb_s22.T)))
-	Rb_s33 = np.dot(H, (np.identity(3) - (2. / rho) * np.dot(tb_s33, nb_s33.T)))
+	return results
 
 def main():
-	# img1 was manually placed to have a Pitch, Yaw, Roll of (158, -25., -145.) degrees
-	# img2 has a Pitch, Yaw, Roll of (158. -20., -145.) degrees
-	# both images have the same X, Y, Z coordinates of (384, 277, 360) inches
-	# thus the only difference between the points in img1 to img2 should be
-	# 5 degrees in the yaw direction
+	img1 = cv2.imread('attitudeTracking/small/l1.jpeg', 0)
+	img2 = cv2.imread('attitudeTracking/small/l2.jpeg', 0)
+	H_main, src_pts, dst_pts = featureMatching(img1, img2, 'matches.png')
 
-	img1 = cv2.imread('attitudeTracking/multipleChanges/l1.jpeg',0) # queryImage
-	img2 = cv2.imread('attitudeTracking/multipleChanges/l2.jpeg',0) # trainImage
+	img1R = cv2.imread('attitudeTracking/multipleAngles/r2.jpeg',0) # queryImage
+	img2R = cv2.imread('attitudeTracking/multipleAngles/r3.jpeg',0) # trainImage
+	HR, src_pts_r, dst_pts_r = featureMatching(img1R, img2R, 'matchesR.jpeg')
+
+	img1L = cv2.imread('attitudeTracking/multipleAngles/l1.jpeg',0) # queryImage
+	img2L = cv2.imread('attitudeTracking/multipleAngles/l2.jpeg',0) # trainImage
 
 	# compute the feature matching, calculate the homography matrix
-	H, src_pts, dst_pts = featureMatching(img1, img2)
+	HL, src_pts_l, dst_pts_l = featureMatching(img1L, img2L, 'matchesL.jpeg')
 
-	# camera matrices attained through an external calibration script
-	# M_camL was attained through the calibration script but it only has 
-	# semi-decent performance, so I was experiementing with modified 
-	# camera matrices M and K. These get better results but since they were 
-	# manually altered, there performance is not universal to all images
 
 	# M = np.array([[  1.78586597e+03,   0.00000000e+00,   9.60000000e+02],
     #   [  0.00000000e+00,   1.99299316e+02,   5.52500000e+02],
@@ -373,16 +332,18 @@ def main():
        [  0.00000000e+00,   1.70664233e+03,   5.45250506e+02],
        [  0.00000000e+00,   0.00000000e+00,   1.00000000e+00]])
 
+	M_camR = np.array([[  1.89292737e+03,   0.00000000e+00,   9.17130175e+02],
+       [  0.00000000e+00,   2.09561499e+03,   5.37271880e+02],
+       [  0.00000000e+00,   0.00000000e+00,   1.00000000e+00]])
 	# OpenCV Homography decomposition method
 	print 'OpenCv Homography Decomposition'
-	detAttitude(H, M_camL)
-	print '\n'
-	# UCLA Method
-	print 'UCLA Method'
-	newAttitude(H)
-	print '\n'
-	print 'Paper on Homography Decomposition'
-	# Paper method
-	paperAttitude(H)
+	print 'Left'
+	rl, pl, yl = detAttitude(HL, M_camL)
+	print 'Right'
+	rr, pr, yr = detAttitude(HR, M_camR)
 
-	# again the calculated angles should have degree magnitudes about equal to 0 pitch, 0 roll, 5 yaw
+	print 'Angle averages:'
+	print 'roll = ',np.round(np.mean([rr, rl]), 4), \
+	' pitch = ',np.round(np.mean([pr, pl]), 4), \
+	' yaw = ', np.round(np.mean([yr, yl]), 4)
+
