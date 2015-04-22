@@ -6,10 +6,31 @@ import glob as glob
 import math
 import numpy.linalg as la
 import simplejson
+import re
 import pandas as pd
 from collections import Counter
 from mpl_toolkits.mplot3d import Axes3D
 
+class KalmanFilter(object):
+    def __init__(self, process_var, measurement_var):
+        self.process_var = process_var
+        self.measurement_var = measurement_var
+        self.posteri_est = None
+        self.posteri_error_est = 1.0
+
+    def update(self, measurement):
+        if self.posteri_est is None:
+            self.posteri_est = measurement
+
+        priori_est = self.posteri_est
+        priori_error_est = self.posteri_error_est + self.process_var
+
+        gain = priori_error_est / (priori_error_est + self.measurement_var)
+        self.posteri_est = priori_est + gain * (measurement - priori_est)
+        self.posteri_error_est = (1 - gain) * priori_error_est
+
+    def predict(self):
+        return self.posteri_est
 
 class CubeSat(object):
     x, y, z = 0., 0., 0.
@@ -24,7 +45,6 @@ class CubeSat(object):
         self.yaw = yw
         self.roll = r
         self.error = e
-
 
 def drawMatches(img1, kp1, img2, kp2, matches, name):
     """
@@ -122,7 +142,7 @@ def featureMatching(img1, img2, name):
         # dst = cv2.perspectiveTransform(pts,M)
 
     # plot the first 100 matches
-    # drawMatches(img1, kp1, img2, kp2, good[:100], name)
+    # drawMatches(img1, kp1, img2, kp2, good[:200], name)
 
     return M
 
@@ -164,11 +184,17 @@ def detAttitude(HL, ML, HR, MR, ar, ap, ay):
     R_R = calcR(HR, MR)
 
     # Compute angles
-    results = calcAngles(R_R, R_L, ar, ap, ay)
-    satellite.roll = results[0][0]
-    satellite.pitch = results[0][1]
-    satellite.yaw = results[0][2]
-    satellite.error = results[0][3]
+    r, p, y = calcAngles(R_R, R_L, ar, ap, ay)
+    
+    kf.update(np.array([r, p, y]))
+    r, p, y = kf.predict()
+    satellite.roll = r
+    satellite.pitch = p
+    satellite.yaw = y
+
+    # note: to estimate location you will need to SUBTRACT
+    # r, p, y from the current angle to get the proper sign
+    satellite.error = error(ar, r, ap, p, ay, y)
 
     return satellite
 
@@ -197,34 +223,9 @@ def PYR(R):
     else:
         pitch = np.round(math.degrees(math.atan2(-r23, r33)), 4)
         roll = np.round(math.degrees(math.atan2(-r12, r11)), 4)
-        yaw = np.round(math.degrees(math.asin(r13)), 4)
+        yaw = np.round(math.degrees(math.asin(-r13)), 4)
 
     return pitch, roll, yaw
-
-# def RYP(R):
-#     '''Rotation Matrix Decomposition for rotation angles applied
-#     in the order of Roll - Yaw - Pitch '''
-#     r11, r12, r13, r21, r22, r23, r31, r32, r33 = R.flat
-
-#     # if singularity at north pole
-#     if -r31 > 0.998:
-#         yaw = np.round(math.degrees(math.pi / 2.), 4)
-#         roll = np.round(math.degrees(math.atan2(r13, -r23)), 4)
-#         pitch = 0.
-
-#     # if singularity at south pole
-#     elif -r31 < -0.998:
-#         yaw = np.round(math.degrees(-math.pi / 2.), 4)
-#         roll = np.round(math.degrees(math.atan2(r13, -r23)), 4)
-#         pitch = 0.
-
-#     else:
-#         pitch = np.round(math.degrees(math.atan2(r32, r33)), 4)
-#         roll = np.round(math.degrees(math.atan2(r21, r11)), 4)
-#         yaw = np.round(math.degrees(math.asin(-r31)), 4)
-
-#     return pitch, roll, yaw
-
 
 def meanAngle(rr, rl, pr, pl, yr, yl):
     r1 = np.round(np.mean([rr, rl]), 4)
@@ -251,33 +252,30 @@ def calcAngles(R_R, R_L, ar, ap, ay):
     pr, rr, yr = PYR(R_R)
     pl, rl, yl = PYR(R_L)
     r2, p2, y2 = meanAngle(rr, rl, pr, pl, yr, yl)
-    e2 = error(ar, r2, ap, p2, ay, y2)
-    results.append([r2, p2, y2, e2, 'PYR'])
 
-    return results
-
+    return r2, p2, y2
 
 def splitString(name):
     vals = name.split('_')
     y = vals[-1].split('.')[0]
-    val1 = [float(vals[1]), float(vals[2]), float(y)]
+    val1 = [float(vals[-3]), float(vals[-2]), float(y)]
 
     return val1
 
+def natural_sort(l): 
+    '''Natural sort to have numbers go in human order'''
+    convert = lambda text: int(text) if text.isdigit() else text.lower() 
+    alphanum_key = lambda key: [convert(c) for c in re.split('([0-9]+)', key)] 
+    return sorted(l, key=alphanum_key)
 
 def findBest():
     imgsL = glob.glob('attitude/left_*.jpeg')
     imgsR = glob.glob('attitude/right_*.jpeg')
 
     # Make sure the stereo images are in the same order
-    imgsL = sorted(imgsL)
-    imgsR = sorted(imgsR)
-    # values = np.array([[-146., 160., -18.],
-    #                    [-146., 162., -18.],
-    #                    [-143., 162., -18.],
-    #                    [-143., 162., -19.],
-    #                    [-143., 162., -19.],
-    #                    [-143., 162., -19.]])
+    imgsL = natural_sort(imgsL)
+    imgsR = natural_sort(imgsR)
+
     M_camL = np.array([[1.78586597e+03,   0.00000000e+00,   9.15499196e+02],
                        [0.00000000e+00,   1.70664233e+03,   5.45250506e+02],
                        [0.00000000e+00,   0.00000000e+00,   1.00000000e+00]])
@@ -286,16 +284,12 @@ def findBest():
                        [0.00000000e+00,   2.09561499e+03,   5.37271880e+02],
                        [0.00000000e+00,   0.00000000e+00,   1.00000000e+00]])
 
-    i = 1
-
-    output = pd.Series()
-    trial = pd.Series()
+    output = pd.DataFrame(columns = ('r', 'p', 'y', 'ar', 'ap', 'ay', 'e'))
 
     for img1L_name, img1R_name in zip(imgsL, imgsR):
 
         img1L = cv2.imread(img1L_name, 0)
         img1R = cv2.imread(img1R_name, 0)
-        j = 1
 
         val1 = splitString(img1L_name)
 
@@ -305,14 +299,16 @@ def findBest():
             val2 = splitString(img2L_name)
             ar, ap, ay = np.array(val1) - np.array(val2)
 
-            nameL = 'attitudeResults/matchesL' + \
+            nameL = 'attitudeResults/filtered/matchesL' + \
                 str(val1) + str(val2) + '.png'
-            nameR = 'attitudeResults/matchesR' + \
+            nameR = 'attitudeResults/filtered/matchesR' + \
                 str(val1) + str(val2) + '.png'
 
             HR = featureMatching(img1R, img2R, nameR)
             HL = featureMatching(img1L, img2L, nameL)
             satellite = detAttitude(HL, M_camL, HR, M_camR, ar, ap, ay)
+
+            trial = pd.Series()
             trial['r'] = satellite.roll
             trial['p'] = satellite.pitch
             trial['y'] = satellite.yaw
@@ -322,32 +318,88 @@ def findBest():
             trial['e'] = satellite.error
             print str(val1) + str(val2)
 
-            output = pd.concat((trial, output), axis=1)
+            output = output.append(trial, ignore_index = True)
+        break
 
-            break
-            j += 1
-        i += 1
+    output.to_csv('attitudeResults/attitude_data_filtered' + str(Q) + '_' + \
+        str(R) + '.csv')
 
-    output.to_csv('attitude_data.csv')
+    return output
 
-    # r_arr = np.array(results)
-    # names = r_arr[:,-1]
-    # counts = Counter(names.tolist())
-    # print counts
+def findBestTimeSim():
+    # conduct time sim from pitch = 10. to -10.
+    imgsL = glob.glob('attitude/left_*.jpeg')
+    imgsR = glob.glob('attitude/right_*.jpeg')
+   
+    # Make sure the stereo images are in the same order
+    imgsL = natural_sort(imgsL)
+    imgsR = natural_sort(imgsR)
 
-    # plot bar graph of Euler method used
-    # df = pandas.DataFrame.from_dict(counts, orient = 'index')
-    # df.plot(kind = 'bar')
-    # plt.savefig('rotation_error.png')
-    # plt.show()
+    half = len(imgsL) / 2 + 1
 
-    # write results to text file
-    # f = open('attitudeTracking/small_matches/RYP.txt', 'w')
-    # simplejson.dump(results, f)
-    # f.close()
+    # Put imgs in order from largest to smallest pitch angle
+    B = imgsL[:half]
+    B.reverse()
+    imgsL[:half] = B
 
-    return results
+    B = imgsR[:half]
+    B.reverse()
+    imgsR[:half] = B
 
+    M_camL = np.array([[1.78586597e+03,   0.00000000e+00,   9.15499196e+02],
+                       [0.00000000e+00,   1.70664233e+03,   5.45250506e+02],
+                       [0.00000000e+00,   0.00000000e+00,   1.00000000e+00]])
+
+    M_camR = np.array([[1.89292737e+03,   0.00000000e+00,   9.17130175e+02],
+                       [0.00000000e+00,   2.09561499e+03,   5.37271880e+02],
+                       [0.00000000e+00,   0.00000000e+00,   1.00000000e+00]])
+
+    output = pd.DataFrame(columns = ('r', 'p', 'y', 'ar', 'ap', \
+        'ay', 'e', 'Q', 'R'))
+    time = len(imgsL) - 1
+    # time = 5
+
+    for dt in range(time):
+
+        img1L = cv2.imread(imgsL[dt], 0)
+        img1R = cv2.imread(imgsR[dt], 0)
+
+        val1 = splitString(imgsL[dt])
+
+        img2L = cv2.imread(imgsL[dt + 1], 0)
+        img2R = cv2.imread(imgsR[dt + 1], 0)
+        val2 = splitString(imgsL[dt + 1])
+        ar, ap, ay = np.array(val1) - np.array(val2)
+
+        nameL = 'attitudeTimeResults/matchesL' + \
+            str(val1) + str(val2) + '.png'
+        nameR = 'attitudeTimeResults/matchesR' + \
+            str(val1) + str(val2) + '.png'
+
+        HR = featureMatching(img1R, img2R, nameR)
+        HL = featureMatching(img1L, img2L, nameL)
+        satellite = detAttitude(HL, M_camL, HR, M_camR, ar, ap, ay)
+
+        trial = pd.Series()
+        trial['r'] = satellite.roll
+        trial['p'] = satellite.pitch
+        trial['y'] = satellite.yaw
+        trial['ar'] = ar
+        trial['ap'] = ap
+        trial['ay'] = ay
+        trial['Q'] = Q
+        trial['R'] = R
+        trial['e'] = satellite.error
+        print str(val1) + str(val2)
+
+        output = output.append(trial, ignore_index = True)
+
+    # print output
+    output.to_csv('attitudeResults/attitude_data_time_filter_P' + \
+        str(np.round(Q, 3)) + str(np.round(R, 3)) + '.csv')
+    # output.to_csv('attitudeResults/attitude_data_time_unfiltered_P.csv')
+
+    return output
 
 def main():
     M_camL = np.array([[1.78586597e+03,   0.00000000e+00,   9.15499196e+02],
@@ -397,3 +449,39 @@ def main():
     print 'roll = ', np.round(np.mean([rr, rl]), 4), \
         ' pitch = ', np.round(np.mean([pr, pl]), 4), \
         ' yaw = ', np.round(np.mean([yr, yl]), 4)
+
+
+# Qest = np.linspace(0.001, 0.01, 10)#np.linspace(0.1, 0.98, 10)
+# Rest = np.linspace(10.0, 11.0, 10)
+
+# Qest = np.linspace(0., 10., 10)
+# for q in Qest:
+#     # Kalman Filter
+#     # Q = process var., R = measurement var
+#     Q, R = q, 1 #15. #0.032, 1.
+
+#     kf = KalmanFilter(Q, R)
+#     output = findBest()
+#     print 'average error = ', output['e'].mean()
+
+
+# # Test All Combinations with Filter
+Q, R = 0.001, 50. #15. #0.032, 1.
+
+kf = KalmanFilter(Q, R)
+output = findBestTimeSim()
+
+output['e'].plot()
+plt.title("Filtered Error (P)")
+plt.savefig("attitudeResults/unfilteredP_error.png")
+plt.show()
+
+output[['p']].plot()
+plt.title("Filtered Pitch")
+plt.savefig("attitudeResults/unfilteredP_pitch.png")
+plt.show()
+
+output[['p','ap', 'y', 'ay', 'r', 'ar']].plot()
+plt.title("All Output")
+plt.savefig("attitudeResults/unfilteredP_output.png")
+plt.show()
