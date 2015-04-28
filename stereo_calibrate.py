@@ -2,6 +2,7 @@ import numpy as np
 import cv2
 import glob as glob
 import numpy.linalg as la
+from findPoints import *
 
 class StereoCam:
     def __init__(self): # cam1, dist1, cam2, dist2, R1, P1, R2, P2, Q, R, T, K1, K2):
@@ -20,6 +21,8 @@ class StereoCam:
         self.K2 = np.zeros((3, 3))
         self.E = np.zeros((3, 3))
         self.F = np.zeros((3, 3))
+        self.M1 = np.zeros((3, 3))
+        self.M2 = np.zeros((3, 3))
 
     def printCam(self):
         print 'cam1 = ', self.cam1
@@ -37,6 +40,54 @@ class StereoCam:
         print'K2 = ', self.K2
         print 'F = ', self.F
         print 'E = ', self.E 
+
+    def findM(self, img_names, side):
+        pattern_size = (9, 6)
+        square_size = 1.0
+        pattern_points = np.zeros( (np.prod(pattern_size), 3), np.float32 )
+        pattern_points[:,:2] = np.indices(pattern_size).T.reshape(-1, 2)
+        pattern_points *= square_size
+
+        obj_points = []
+        img_points = []
+        h, w = 0, 0
+        for fn in img_names:
+            # print 'processing %s...' % fn,
+            img1 = cv2.imread(fn)
+            img = cv2.cvtColor(img1, cv2.COLOR_BGR2GRAY)
+
+            if img is None:
+              print "Failed to load", fn
+              continue
+
+            h, w = img.shape[:2]
+            found, corners = cv2.findChessboardCorners(img, pattern_size)
+            if found:
+                term = ( cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_COUNT, 30, 0.1 )
+                cv2.cornerSubPix(img, corners, (5, 5), (-1, -1), term)
+
+            if not found:
+                print 'chessboard not found'
+                continue
+            img_points.append(corners.reshape(-1, 2))
+            obj_points.append(pattern_points)
+
+        rms, camera_matrix, dist_coefs, rvecs, tvecs = \
+                        cv2.calibrateCamera(obj_points, img_points, (w, h), None, None)
+
+        #undistort images
+        K = camera_matrix
+        d = np.array([dist_coefs[0][0], dist_coefs[0][1], 0, 0, 0])
+
+        img = cv2.imread('calibration_samples/r1.jpeg')
+        h, w = img.shape[:2]
+
+        if side == 1:
+            self.M1, _= cv2.getOptimalNewCameraMatrix(K, d, (w,h), 0)
+
+        if side == 2:
+            self.M2, _ = cv2.getOptimalNewCameraMatrix(K, d, (w,h), 0)
+
 
 def locateStereoPoints(imagesL, imagesR):
     '''Get the object points (this will be the same for both images) 
@@ -141,6 +192,7 @@ def remapImages(imgL, imgR, cameraObj, imsize, folder):
 
     cam2, dist2, R2, K2 = cameraObj.cam2, cameraObj.dist2, \
         cameraObj.R2, cameraObj.K2
+
     map1x, map1y = cv2.initUndistortRectifyMap(cam1, dist1, R1, K1, imsize, 5)
     map2x, map2y = cv2.initUndistortRectifyMap(cam2, dist2, R2, K2, imsize, 5)
 
@@ -149,29 +201,36 @@ def remapImages(imgL, imgR, cameraObj, imsize, folder):
     r_imgL = cv2.remap(imgL, map1x, map1y, cv2.INTER_LINEAR)
     r_imgR = cv2.remap(imgR, map2x, map2y, cv2.INTER_LINEAR)
 
+    r_imgL = cv2.medianBlur(r_imgL, 3)
+    r_imgR = cv2.medianBlur(r_imgR, 3)
     # Save the Rectified Images
-    cv2.imwrite(folder + "rectify_imgL.png", r_imgL)
-    cv2.imwrite(folder + "rectify_imgR.png", r_imgR)
+    r_Name = imageName(folder, 'rectify_imgR.png')
+    l_Name = imageName(folder, 'rectify_imgL.png')
+    cv2.imwrite(r_Name, r_imgL)
+    cv2.imwrite(l_Name,r_imgR)
 
     return r_imgL, r_imgR
 
 def computeDisparity(r_imgL, r_imgR, cameraObj):
-    window_size = 11
-    min_disp = 20
-    num_disp = 52 - min_disp # 26
+    window_size = 9
+    min_disp = 0 #20
+    max_disp = 1920 / 8 # image width / 8
+    num_disp = max_disp - min_disp #52 - min_disp # 26
     stereo = cv2.StereoSGBM(minDisparity=min_disp,
                             numDisparities=num_disp,
                             SADWindowSize=window_size,
-                            uniquenessRatio=5,
+                            uniquenessRatio=10, #5,
                             speckleWindowSize=100,
-                            speckleRange=1,
+                            speckleRange=32,
                             disp12MaxDiff=1,
+                            preFilterCap = 63,
                             P1=8 * 3 * window_size**2,
                             P2=32 * 3 * window_size**2,
                             fullDP = False
                             )
+    #old: speckleRange = 1, no prefilter cap, fullDP = false
     print 'computing disparity...'
-    disp = stereo.compute(r_imgL, r_imgR).astype(np.float32) / 16.0
+    disp = stereo.compute(r_imgL, r_imgR).astype(np.float32) / 16. #max_disp #/52.
     disp_value = (disp - min_disp) / num_disp
 
     h, w = r_imgL.shape[:2]
@@ -184,14 +243,15 @@ def stereoCalibration():
 
     obj_pts, ptsL, ptsR, imsize = locateStereoPoints(imagesL, imagesR)
     stereoCams = calibrateImages(obj_pts, ptsL, ptsR, imsize)
+    stereoCams.findM(imagesL, 1)
+    stereoCams.findM(imagesR, 2)
     
     return imsize, stereoCams
 
 def rectifyImage(imgL, imgR, imsize, stereoCams, folder):
     # Rectified images
     r_imgL, r_imgR = remapImages(imgL, imgR, stereoCams, imsize, folder)
-    disp, points = computeDisparity(r_imgL, r_imgR, stereoCams)
 
-    return r_imgL, r_imgR, disp, points
+    return r_imgL, r_imgR
 
 
