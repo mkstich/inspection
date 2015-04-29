@@ -57,6 +57,8 @@ def determinePoints(stereoCams, ptsL, ptsR, dL, dR, imsize):
 				coords[2] / coords[-1]
 
 			coordsL.append(np.array([X[0], Y[0], Z[0]]))
+			# print "distance = ",10. * 1920. / (2 * math.tan(0.912423 / 2.) * d)
+			# print (np.linalg.norm(stereoCams.T) * w) / (2 * math.tan(0.5 * 4.211) * d), Z
 			# c2L.append(pointsL[y-1][x-1])
 
 	# Find Right Image World Coordinates
@@ -160,25 +162,34 @@ def calcDistances(coordsL, coordsR, eL, eR):
 	print limit	
 	d2 = [i for i in dist if i[0] <= limit]
 	cL, cR = [], []
-	aL, aR = [], []
+	areaL, areaR = [], []
+	a_L, a_R = [], []
 	for i in d2:
+		# world coordinates
 		cL.append(coordsL[int(i[1])])
 		cR.append(coordsR[int(i[2])])
-		aL.append(ellipseArea(eL[int(i[1])].a, eL[int(i[1])].b))
-		aR.append(ellipseArea(eR[int(i[2])].a, eR[int(i[2])].b))
 
-	return cL, cR, aL, aR
+		# area
+		areaL.append(ellipseArea(eL[int(i[1])].a, eL[int(i[1])].b))
+		areaR.append(ellipseArea(eR[int(i[2])].a, eR[int(i[2])].b))
 
-def computeMeanDist(cL, cR, aL, aR):
+		# semi - major axis
+		a_L.append(eL[int(i[1])].a)
+		a_R.append(eL[int(i[1])].a)
+
+	return cL, cR, areaL, areaR, a_L, a_R
+
+def computeMeanDist(cL, cR, areaL, areaR, aL, aR):
 	'''Predict where the actual ellipse center should be located
 	by computing the mean of the left and right world coords'''
 	new_coords = []
-	for i, j, a1, a2 in zip(cL, cR, aL, aR):
+	for i, j, a1, a2, area1, area2 in zip(cL, cR, aL, aR, areaL, areaR):
 		x = np.mean([i[0], j[0]])
 		y = np.mean([i[1], j[1]])
 		z = np.mean([i[2], j[2]])
-		area = np.mean([a1, a2])
-		new_coords.append(np.array([x, y, z, area]))
+		area = np.mean([area1, area2])
+		a = np.mean([a1, a2])
+		new_coords.append(np.array([x, y, z, a, area]))
 
 	return new_coords
 
@@ -194,13 +205,13 @@ def calculate3DCloud(ptsL, ptsR, stereoCams, dL, dR, name, imsize):
 	'''Calculate the 3D world coordinate cloud'''
 	# determine 3D points
 	coordsL, coordsR = determinePoints(stereoCams, ptsL, ptsR, dL, dR, imsize)
-	cL, cR, aL, aR = calcDistances(coordsL, coordsR, ptsL, ptsR)
+	cL, cR, areaL, areaR, aL, aR = calcDistances(coordsL, coordsR, ptsL, ptsR)
 	
 	avg_corr = compute3DPointCorrelation(cL, cR)
 	print "matches = ", len(cL)
 	print 'Average correlation coeff between L and R image pts = ', avg_corr
 	# predict actual 3D points
-	predPoints = computeMeanDist(cL, cR, aL, aR)
+	predPoints = computeMeanDist(cL, cR, areaL, areaR, aL, aR)
 
 	# plot results
 	createScatter(cL, cR, predPoints, name)
@@ -299,10 +310,12 @@ def findDistance():
         dist.append(pred_dist)
         # break
 
-    return output, dist
+    new_output = plotAll(output, dist)
+
+    return output, dist, new_output
 
 def plotAll(output, dist):
-	new_output = pd.DataFrame(columns = ('x', 'y', 'z', 'd', 'm', 'a'))
+	new_output = pd.DataFrame(columns = ('x', 'y', 'z', 'd', 'm', 'a', 'area'))
 
 	for i in range(len(output)):
 		for j in range(len(output[i])):
@@ -312,6 +325,7 @@ def plotAll(output, dist):
 			trial['z'] = output[i][j][2]
 			trial['d'] = dist[i][j]
 			trial['a'] = output[i][j][3]
+			trial['area'] = output[i][j][-1]
 			trial['m'] = len(output[i])
 
 			new_output = new_output.append(trial, ignore_index = True)
@@ -344,8 +358,8 @@ def distPredict(dist):
 		min_d.append(m)
 
 		mn = np.mean(i)
-		kf.update(mn)
-		mn = kf.predict()
+		kfm.update(mn)
+		mn = kfm.predict()
 		mean_d.append(mn)
 		old_mean_d.append(np.mean(i))
 
@@ -362,28 +376,130 @@ def distPredict(dist):
 
 	origin = np.array(origin)
 
-# area = []
-# for i in output:
-# 	a = []
-# 	for j in range(len(i)):
-# 		a.append(i[j][3])
-# 	area.append(a)
+def distLengthPredict(stereoCams, length):
+	f1 = np.mean([stereoCams.M1[0][0], stereoCams.M2[0][0]])
+	f2 = np.mean([stereoCams.M2[0][0], stereoCams.M2[1][1]])
+	f = np.mean([f1, f2])
+	f_img = 35. #588.4 # mm (FOV = 4.211 degrees)
+	m = f / f_img
+	obj_real_world = 350. #404.157 # mm
+	sensor = length / m
 
-# min_area, old_min = [], []
-# mean_area, old_area = [], []
-# Q, R = 0.01, 1.
-# kf = KalmanFilter(Q, R)
-# kfm = KalmanFilter(Q, R)
-# for i in area:
-# 	kf.update(min(i))
-# 	m = kf.predict()
-# 	min_area.append(m)
-# 	old_min.append(min(i))
+	distance = obj_real_world * f_img / sensor
 
-# 	kfm.update(np.mean(i))
-# 	mn = kf.predict()
-# 	mean_area.append(mn)
-# 	old_area.append(np.mean(i))
+	# convert to inches
+	distance = (distance / 10.) / 2.54
 
-# plt.plot(min_area), plt.plot(old_min), plt.show()
-# plt.plot(mean_area), plt.plot(old_area), plt.show()
+	# compare to actual results
+	n = np.linspace(5., 300., 60.)
+	origin = n[::-1]
+
+	error = np.sum(distance - origin)
+	print error
+	# plot results
+	plt.plot(distance)
+	plt.plot(origin)
+	# plt.savefig("dist_predict.png")
+	plt.show()
+
+	return distance
+
+output = pd.DataFrame.from_csv("modified_disp_data.csv")
+
+def extractA(output):
+	a = []
+	# a_temp = []
+	m = output['m'].iloc[0]
+
+	i = 0.
+	last = False
+
+	while last is False:
+		a_temp = []
+		m = output['m'].iloc[i]
+		start = i
+
+		if i + m > len(output) - 1:
+			end = output.iloc[-1].name
+			last = True
+		else:
+			end = i + m
+
+		for j in range(int(m)):
+			a_temp.append(output['a'].iloc[start + j] * 2.)
+
+		a.append(a_temp)
+		i = end
+
+	return a
+
+def getMaxA(a_output, Q, R):
+	kf = KalmanFilter(Q, R)
+	max_a, unfilter_a_max = [], []
+
+	for i in a_output:
+		# s = sorted(i)
+		kf.update(max(i) - np.std(i))#s[-3])
+		m = kf.predict()
+		max_a.append(m)
+
+		unfilter_a_max.append(max(i) - np.std(i))#s[-3])
+
+	plt.plot(max_a, label='Filtered')
+	plt.plot(unfilter_a_max, label = 'Unfiltered')
+	plt.legend()
+	plt.title("Q = " + str(Q) + " R = " + str(R))
+	plt.savefig("max_a.png")
+	plt.show()
+
+	return np.array(max_a), np.array(unfilter_a_max)
+
+def getMeanA(a_output, Q, R):
+	kf = KalmanFilter(Q, R)
+	mean_a, unfilter_a_mean = [], []
+
+	for i in a_output:
+		s = sorted(i)
+		# kf.update(np.mean(i) + np.std(i))
+		kf.update(np.mean(s[:-2]) + np.std(s[:-2]))
+		m = kf.predict()
+		mean_a.append(m)
+
+		unfilter_a_mean.append(np.mean(s[:-2]) + np.std(s[:-2]))
+
+	plt.plot(mean_a, label='Filtered')
+	plt.plot(unfilter_a_mean, label = 'Unfiltered')
+	plt.title("Q = " + str(Q) + " R = " + str(R))
+	plt.legend()
+	plt.show()
+
+	return np.array(mean_a), np.array(unfilter_a_mean)
+
+def getMinA(a_output, Q, R):
+	kf = KalmanFilter(Q, R)
+	min_a, unfilter_a_min = [], []
+
+	for i in a_output:
+		kf.update(min(i))
+		m = kf.predict()
+		min_a.append(m)
+
+		unfilter_a_min.append(min(i))
+
+	plt.plot(min_a, label='Filtered')
+	plt.plot(unfilter_a_min, label = 'Unfiltered')
+	plt.title("Q = " + str(Q) + " R = " + str(R))
+	plt.savefig("min_a.png")
+	plt.legend()
+	plt.show()
+
+	return np.array(min_a), np.array(unfilter_a_min)
+
+
+Qest = np.linspace(.10, 10., 10)
+
+for q in Qest:
+	Q, R = 2., 200#10., 50.
+	new_mean, new_u_mean = getMeanA(a, Q, R)
+	d = distLengthPredict(stereoCams, new_mean)
+
