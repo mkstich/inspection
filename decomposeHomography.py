@@ -292,65 +292,6 @@ def natural_sort(l):
     alphanum_key = lambda key: [convert(c) for c in re.split('([0-9]+)', key)] 
     return sorted(l, key=alphanum_key)
 
-def findBest():
-    imgsL = glob.glob('attitude/left_*.jpeg')
-    imgsR = glob.glob('attitude/right_*.jpeg')
-
-    # Make sure the stereo images are in the same order
-    imgsL = natural_sort(imgsL)
-    imgsR = natural_sort(imgsR)
-
-    M_camL = np.array([[1.78586597e+03,   0.00000000e+00,   9.15499196e+02],
-                       [0.00000000e+00,   1.70664233e+03,   5.45250506e+02],
-                       [0.00000000e+00,   0.00000000e+00,   1.00000000e+00]])
-
-    M_camR = np.array([[1.89292737e+03,   0.00000000e+00,   9.17130175e+02],
-                       [0.00000000e+00,   2.09561499e+03,   5.37271880e+02],
-                       [0.00000000e+00,   0.00000000e+00,   1.00000000e+00]])
-
-    output = pd.DataFrame(columns = ('r', 'p', 'y', 'ar', 'ap', \
-        'ay', 'e', 'ae'))
-
-    for img1L_name, img1R_name in zip(imgsL, imgsR):
-
-        img1L = cv2.imread(img1L_name, 0)
-        img1R = cv2.imread(img1R_name, 0)
-
-        val1 = splitString(img1L_name)
-
-        for img2L_name, img2R_name in zip(imgsL, imgsR):
-            img2L = cv2.imread(img2L_name, 0)
-            img2R = cv2.imread(img2R_name, 0)
-            val2 = splitString(img2L_name)
-            ar, ap, ay = np.array(val1) - np.array(val2)
-
-            nameL = 'attitudeResults/filtered/matchesL' + \
-                str(val1) + str(val2) + '.png'
-            nameR = 'attitudeResults/filtered/matchesR' + \
-                str(val1) + str(val2) + '.png'
-
-            HR = featureMatching(img1R, img2R, nameR)
-            HL = featureMatching(img1L, img2L, nameL)
-            satellite = detAttitude(HL, M_camL, HR, M_camR, ar, ap, ay)
-
-            trial = pd.Series()
-            trial['r'] = satellite.roll
-            trial['p'] = satellite.pitch
-            trial['y'] = satellite.yaw
-            trial['ar'] = ar
-            trial['ap'] = ap
-            trial['ay'] = ay
-            trial['e'] = satellite.error
-            trial['ae'] = satellite.abs_err
-            # print str(val1) + str(val2)
-
-            output = output.append(trial, ignore_index = True)
-        break
-
-    output.to_csv('attitudeResults/attitude_data_filtered' + str(Q) + '_' + \
-        str(R) + '.csv')
-
-    return output
 
 def findBestTimeSim(imgsL, imgsR, filtered, name, stereoCams):
     '''Calculate RPY angles for a full time sim
@@ -386,7 +327,6 @@ def findBestTimeSim(imgsL, imgsR, filtered, name, stereoCams):
     output = pd.DataFrame(columns = ('r', 'p', 'y', 'ar', 'ap', \
         'ay', 'e', 'ae','Q', 'R'))
     time = len(imgsL) - 1
-    # time = 5
 
     for dt in range(time):
 
@@ -421,85 +361,19 @@ def findBestTimeSim(imgsL, imgsR, filtered, name, stereoCams):
             trial['R'] = R
         trial['e'] = satellite.error
         trial['ae'] = satellite.abs_err
-        # print str(val1) + str(val2)
+        print str(val1) + str(val2)
 
         output = output.append(trial, ignore_index = True)
 
     # print output
     if filtered == True:
-        output.to_csv('attitudeResults/attitude_data_time_filter_' + name + \
+        output.to_csv('attitudeResults/new_M/filter_' + name + \
             str(np.round(Q, 3)) + '_' + str(np.round(R, 3)) + '.csv')
     else:
-        output.to_csv('attitudeResults/attitude_data_time_unfiltered_' + \
+        output.to_csv('attitudeResults/new_M/unfiltered_' + \
             name + '.csv')
 
     return output
-
-
-# Qest = np.linspace(0.001, 0.01, 10)#np.linspace(0.1, 0.98, 10)
-# Rest = np.linspace(.1, 1.0, 10)
-# Qest = np.linspace(0.1, 10, 10)
-# Q, R = 1., 0.001. #15. #0.032, 1.
-# kf = KalmanFilter(Q, R)
-
-imgsL = glob.glob('attitude/pitch_yaw_roll/left_*.jpeg')
-imgsR = glob.glob('attitude/pitch_yaw_roll/right_*.jpeg')
-
-# # # for q in Qest:
-# #     # Kalman Filter
-# #     # Q = process var., R = measurement var
-
-output = findBestTimeSim(imgsL, imgsR, False, "PYR", stereoCams)
-print 'total abs error = ', output['ae'].sum()
-
-
-# # Test All Combinations with Filter
-# Q, R = 0.001, 1. #15. #0.032, 1.
-
-# # conduct time sim from pitch = 10. to -10.
-# imgsL = glob.glob('attitude/left_*.jpeg')
-# imgsR = glob.glob('attitude/right_*.jpeg')
-
-# kf = KalmanFilter(Q, R)
-# output = findBestTimeSim(imgsL, imgsR, False, "P")
-
-# output['e'].plot()
-# plt.title("Filtered Error (PYR) \n Q = " + str(Q) + ", R = " + str(R))
-# plt.savefig("attitudeResults/filteredPYR_" + str(Q) + "_" + \
-#     str(R) + "_error.png")
-# plt.show()
-
-# output[['p', 'y', 'r']].plot()
-# plt.title("Filtered Pitch, Yaw, Roll \n Q = " + str(Q) + \
-#     ", R = " + str(R))
-# plt.savefig("attitudeResults/filteredPYR_" + str(Q) + "_" + str(R) + \
-#     "_pitch_yaw_roll.png")
-# plt.show()
-
-# output[['p','ap', 'y', 'ay', 'r', 'ar']].plot()
-# plt.title("All Filtered Output (PYR) \n Q = " + str(Q) + ", R = " + str(R))
-# plt.savefig("attitudeResults/filteredPYR_" + str(Q) + "_" + str(R) + \
-#     "_output.png")
-# plt.show()
-
-# output['e'].plot()
-# plt.title("Unfiltered Error (PYR)")
-# plt.savefig("attitudeResults/unfilteredPYR_error.png")
-# plt.legend(loc = 1)
-# plt.show()
-
-# output[['p', 'y', 'r']].plot()
-# plt.title("Unfiltered Pitch, Yaw, Roll")
-# plt.savefig("attitudeResults/unfilteredPYR_pitch_yaw_roll.png")
-# plt.legend(loc = 1)
-# plt.show()
-
-# output[['p','ap', 'y', 'ay', 'r', 'ar']].plot()
-# plt.title("All Unfiltered Output (PYR)")
-# plt.legend(loc = 1)
-# plt.savefig("attitudeResults/unfilteredPYR_output.png")
-# plt.show()
-
 
 def RelativeAttitude(data, name, filtered, show_plot):
     output = pd.DataFrame.from_csv(data)
@@ -560,17 +434,25 @@ def RelativeAttitude(data, name, filtered, show_plot):
         trial['R'] = R
         new_output = new_output.append(trial, ignore_index = True)
 
-    new_output[['p','ap', 'y', 'ay', 'r', 'ar', 'ae']].plot()
+    plt.plot(new_output['p'], 'r--', label = 'p')
+    plt.plot(new_output['ap'], 'r-', label = 'ap')
+    plt.plot(new_output['y'], 'b--', label = 'y')
+    plt.plot(new_output['ay'], 'b-', label = 'ay')
+    plt.plot(new_output['r'], 'g--', label = 'r')
+    plt.plot(new_output['ar'], 'g-', label = 'ar')
+    plt.plot(new_output['ae'], 'k-', label = 'ae')
 
     if show_plot == True:
         if filtered == True:
             plt.title("All Filtered Output (" + name + ")")
             plt.axis([0, 20, -30, 30])
-            plt.savefig("attitudeResults/filtered_noR_" + name + "_output.png")
+            plt.legend(loc = 1)
+            plt.savefig("attitudeResults/old_M/filtered_" + name + "_output.png")
         else:
             plt.title("All Unfiltered Output (" + name + ")")
             plt.axis([0, 20, -30, 30])
-            plt.savefig("attitudeResults/unfiltered" + name + "_output.png")     
+            plt.legend(loc = 1)
+            plt.savefig("attitudeResults/old_M/unfiltered" + name + "_output.png")     
         plt.show()
 
     else:
@@ -578,20 +460,82 @@ def RelativeAttitude(data, name, filtered, show_plot):
     plt.close("all")
     return new_output
 
-# Qest = np.linspace(10, 100., 10)
-# Rest = np.linspace(1, 10, 10)
+
+def plotUnfiltered(output, name):
+    plt.plot(output['e'], label = 'e')
+    plt.title("Unfiltered Error: " + name)
+    plt.legend(loc = 1)
+    plt.savefig("attitudeResults/new_M/unfiltered" + name + "_error.png")
+    # plt.show()
+    plt.close('all')
+
+    plt.plot(output['p'], 'r--', label = 'p')
+    plt.plot(output['y'], 'b--', label = 'y')
+    plt.plot(output['r'], 'g--', label = 'r')
+    plt.title("Unfiltered Pitch, Yaw, Roll")
+    plt.legend(loc = 1)
+    plt.savefig("attitudeResults/new_M/unfiltered" + name + "_pitch_yaw_roll.png")
+    plt.close('all')
+
+    # plt.show()
+
+    plt.plot(output['p'], 'r--', label = 'p')
+    plt.plot(output['ap'], 'r-', label = 'ap')
+    plt.plot(output['y'], 'b--', label = 'y')
+    plt.plot(output['ay'], 'b-', label = 'ay')
+    plt.plot(output['r'], 'g--', label = 'r')
+    plt.plot(output['ar'], 'g-', label = 'ar')
+    plt.title("All Unfiltered Output: " + name)
+    plt.legend(loc = 1)
+    plt.savefig("attitudeResults/new_M/unfiltered" + name + "_output.png")
+    # plt.show()
+    plt.close('all')
+
 
 att = ['P', 'Y', 'R', 'PY', 'PYR']
-# for r in Rest:
-# # for q in Qest:
-for a in att:
-    Q, R = 0.0001, 1e10
-    # a = 'PYR_new'
-    kf = KalmanFilter(Q, R)
-    data = "attitudeResults/" + a + "_unfiltered.csv"
-    name = a
-    output = RelativeAttitude(data, name, True, True)
-    d = pd.DataFrame.from_csv(data)
-    print output['ae'].iloc[-1]
-    # print d.sum()
-    plt.close('all')
+imgsL = ['attitude/pitch/left_*.jpeg',
+         'attitude/yaw/left_*.jpeg',
+         'attitude/roll/left_*.jpeg',
+         'attitude/pitch_yaw/left_*.jpeg',
+         'attitude/pitch_yaw_roll/left_*.jpeg'
+        ]
+imgsR = ['attitude/pitch/right_*.jpeg',
+         'attitude/yaw/right_*.jpeg',
+         'attitude/roll/right_*.jpeg',
+         'attitude/pitch_yaw/right_*.jpeg',
+         'attitude/pitch_yaw_roll/right_*.jpeg'
+        ]
+
+imsize, stereoCams = stereoCalibration()
+
+# Gather Raw Data from Images ########################
+for name, L, R in zip(att, imgsL, imgsR):
+    imagesL = glob.glob(L)
+    imagesR = glob.glob(R)
+    print name
+    output = findBestTimeSim(imagesL, imagesR, False, name, stereoCams)
+    # output = pd.DataFrame.from_csv("attitudeResults/new_M/unfiltered_" + name + ".csv")
+    print 'total abs error = ', output['ae'].sum()
+    plotUnfiltered(output, name)
+    
+
+# Relative Attitude Output ############################
+# for name in att:
+#     Q, R = 0.001, 1e10
+#     kf = KalmanFilter(Q, R)
+#     # name = 'PYR'
+#     data = "attitudeResults/old_M/" + name + "_unfiltered.csv"
+#     output = RelativeAttitude(data, name, True, True)
+#     d = pd.DataFrame.from_csv(data)
+#     print output['ae']
+#     # print d.sum()
+#     plt.close('all')
+
+# Qest = np.linspace(0.001, 0.01, 10)#np.linspace(0.1, 0.98, 10)
+# Rest = np.linspace(.1, 1.0, 10)
+# Qest = np.linspace(0.1, 10, 10)
+# Q, R = 1., 0.001. #15. #0.032, 1.
+# kf = KalmanFilter(Q, R)
+# # Test All Combinations with Filter
+# Q, R = 0.001, 1. #15. #0.032, 1.
+
