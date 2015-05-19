@@ -36,7 +36,16 @@ def splitString(name):
     return val1
 
 def findRectangle(stereoCams, folder, imsize, L_name, R_name, loc):
-    '''Locate rectangles in a set of images'''
+    '''Locate rectangles in a set of images
+    @stereoCams = stereoCams camera object
+    @folder = folder to save images to
+    @imsize = img size
+    @L_name = L img name
+    @R_name = R img name
+    @loc = EDGE location of where pic was taken
+
+    return = calculated L and R handle rectangles
+    '''
     # Read in the images
     imgL_unrect = cv2.imread(L_name)
     imgR_unrect = cv2.imread(R_name)
@@ -81,7 +90,12 @@ def calcLength(rect):
 
 def findDistance(L, R, imsize, stereoCams, folder):
     '''Call findRectangles to locate the two largest
-    handle rectangles'''
+    handle rectangles
+    @L = L img
+    @R = R img
+
+    return = computed L and R rectangles, and EDGE location
+    '''
     x, y, z, p, yw, r = splitString(L)
     location = str(x) + '_' + str(y) + '_' + str(z)
     print location
@@ -92,10 +106,15 @@ def findDistance(L, R, imsize, stereoCams, folder):
 
     return rectL, rectR, location
 
-def distLengthPredict(stereoCams, length, obj_real_world, side):
+def distLengthPredict(stereoCams, length, obj_real_world):
     '''Compute the estimated distance to the handle
     using its actual real world length (mm) and its estimated 
-    rectangle length (pixels)'''
+    rectangle length (pixels)
+    @length = length of handle as predicted by the handle's rectangleL
+    @obj_real_world = actual ISS length of the corresponding handle
+
+    return = estimated distance to the ISS
+    '''
     # Compute the calibrated focal length using both L and R 
     # camera matrices
     fL = np.mean([stereoCams.M1[0][0], stereoCams.M1[1][1]])
@@ -188,7 +207,12 @@ def prepareImage(images):
 
 
 def TesseractOCR(images, rect):
-    '''Use pytesseract to read the handle numbers'''
+    '''Use pytesseract to read the handle numbers and keep the 
+    rectangles (aka handle lengths) that contained handle numbers 
+    that were read successfully 
+
+    return = handle numbers and its corresponding rect estimates
+    '''
     digit, rectMatch = [], []
 
     for i, r in zip(images, rect):
@@ -207,7 +231,10 @@ def TesseractOCR(images, rect):
     return digit, rectMatch
 
 def smallerRectImage(img_name):
-    '''Recrop the image to the smaller handle tag'''
+    '''Recrop the image to the smaller handle tag
+
+    return = name of the updated handle image
+    '''
     # Read in the image
     # crop out extra noise before extracting new rect
     im = cv2.imread(img_name)
@@ -242,17 +269,38 @@ def smallerRectImage(img_name):
     return img_name
 
 def subimage(image, centre, theta, width, height):
+    '''Crop the image to fit the rotated rectangle found in smallerRectImage()
+
+    @image = image to be cropped
+    @centre = center of the rotated rectangle
+    @theta = angle of rotation for the rotated rect (in radians)
+    @width = width of rotated rect
+    @height = height of rotated rect
+
+    return = modified cropped /rotated image
+    '''
+
+    # Create the image using the inputted params
     output_image = cv.CreateImage((width, height), image.depth, \
         image.nChannels)
+
+    # Create the new rotation mapping matrix
     mapping = np.array([[np.cos(theta), -np.sin(theta), centre[0]],
                         [np.sin(theta), np.cos(theta), centre[1]]])
 
+    # Crop the image
     map_matrix_cv = cv.fromarray(mapping)
     cv2.cv.GetQuadrangleSubPix(image, output_image, map_matrix_cv)
+    
     return output_image
 
 def cropImage(img_name, rect, name, direc):
-    '''Crop the image down to the approx. handle size'''
+    '''Crop the image down to the approx. handle size
+    @img_name = img to be cropped
+    @rect = handle rect that contains the cropping dimensions
+
+    return = vector of all cropped images
+    '''
     img = cv2.imread(img_name)
     name_vec = []
 
@@ -273,16 +321,27 @@ def cropImage(img_name, rect, name, direc):
     return name_vec
 
 def lastParseAttempt(cnt_name, rect):
+    '''If the background of the handle tag is too dark 
+    for Tesseract, reverse the tag's colors. This will likely make
+    the background white, and the handle number black, allowing Tesseract to 
+    have a higher probablity of successful detection
+
+    return = the calculated digit and corresponding handle length
+    '''
     img = cv2.imread(cnt_name)
     cv2.imwrite(cnt_name, 255 - img)
 
-    # digit, length = TesseractOCR(cnt_name, rect)
-    digit, length = 1, 1
+    digit, length = TesseractOCR(cnt_name, rect)
     return digit, length
 
 def matchHandle(digit):
     '''Match the ocr-read handle number to the existing
-    handle number database'''
+    handle number database
+    @digit = OCR detected number
+
+    return = matched rectangle(s) if the digit was successfully matched
+        using the handle database
+    '''
 
     # convert inches to mm
     convert = 25.4
@@ -314,7 +373,10 @@ def matchHandle(digit):
     return matches
 
 def computeAvgDistance(distanceL, distanceR):
-    '''Compute the average distance to the ISS'''
+    '''Compute the average distance to the ISS
+    @distanceL = estimated distance in the left img
+    @distanceR = estimated distance in the right img
+    '''
 
     if len(distanceL) is 0:
         print 'No left handle matches'
@@ -385,6 +447,7 @@ def computeAvgDistance(distanceL, distanceR):
                         print 'Handle: ', distanceR[i][0], ' Distance: ',
                         distanceR[i][1]
 
+#######################################################################################3
 imsize, stereoCams = stereoCalibration()
 
 images = glob.glob("ocr/input/25/handle_*.jpeg")
@@ -453,24 +516,20 @@ for L, R in zip(imgsL, imgsR):
     #     # Match the handle to info in the database
     #     handlePropertiesL = matchHandle(digitL)
 
-    #     # left side indicator
-    #     side = 1
     #     # Predict the distance to the handle
     #     for h, length in zip(handlePropertiesL, lengthL):
     #         n, l, w = h
     #         obj_real_world = l
-    #         d = distLengthPredict(stereoCams, length, obj_real_world, side)
+    #         d = distLengthPredict(stereoCams, length, obj_real_world)
     #         distanceL.append(np.array([n, d]))
 
     # if len(digitR) is not 0:
     #     handlePropertiesR = matchHandle(digitR)
 
-    #     # right side indicator
-    #     side = 2
     #     for h, length in zip(handlePropertiesR, lengthR):
     #         n, l, w = h
     #         obj_real_world = l
-    #         d = distLengthPredict(stereoCams, length, obj_real_world, side)
+    #         d = distLengthPredict(stereoCams, length, obj_real_world)
     #         distanceR.append(np.array([n, d]))
 
     # computeAvgDistance(distanceL, distanceR)

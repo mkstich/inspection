@@ -6,7 +6,12 @@ import math
 
 
 def find_handles(img, name):
-    '''Detect the orange handles in the image by applying the mask'''
+    '''Detect the orange handles in the image by applying the mask
+    @img = input image
+    @name = image name
+
+    return = the calculated bitwise image residual
+    '''
     lower_handles = np.array([20,  20,  0], dtype=np.uint8)  # 35, 50
     upper_handles = np.array([255, 255, 20], dtype=np.uint8)  # 255, 150, 30
 
@@ -22,7 +27,16 @@ def find_handles(img, name):
 def compute_threshold(img, fname, small):
     '''Use Canny edge detection to find the contours, 
     Sort the contours into ellipses and then filter out ellipses 
-    that do not have a small minor axis to major axis ratio'''
+    that do not have a small minor axis to major axis ratio
+    @img = input img
+    @fname = image name
+    @small = round specification. If small = False, this is the first time
+        the img's handles are being detected. If small = True, this is the 
+        second time the handles are being detected, and instead of grabbing the
+        whole handle, use minAreaRect to help locate the handle's number tag.
+
+    return = list of either the largest or the two largest (nonoverlapping) rects
+    '''
 
     # Get the edge map of the image
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
@@ -45,7 +59,6 @@ def compute_threshold(img, fname, small):
                 rectangle = cv2.boundingRect(cnt)
 
             rectangles.append(rectangle)
-            # cv2.drawContours(img, [box], (0, 255, 0), 2)
 
         except Exception as e:
             pass
@@ -59,6 +72,7 @@ def compute_threshold(img, fname, small):
     vertical = False
 
     # Grab the two largest rectangles
+    # Enter this loop if it's the second handle parsing
     if small is True:
         rectangles.sort(key = lambda rectangle: rectangle[1][0] * rectangle[1][1],
             reverse = True)
@@ -72,6 +86,8 @@ def compute_threshold(img, fname, small):
                 vertical = True
 
             # Draw the largest rectangle
+            # Convert the minAreaRect to box points
+            # to properly draw the contour 
             box = cv2.cv.BoxPoints(r[0])
             box = np.int0(box)
             cv2.drawContours(img, [box], 0, (255, 0, 0), 2)
@@ -96,6 +112,7 @@ def compute_threshold(img, fname, small):
                 cv2.drawContours(img, [box], 0, (255, 0, 0), 2)
                 finalRect.append(r[1])
 
+    # Use this loop if it's the first image threshold parsing
     else:
         rectangles.sort(
             key=lambda rectangle: rectangle[2] * rectangle[3], reverse=True)
