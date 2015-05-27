@@ -24,6 +24,7 @@ def find_handles(img, name):
     cv2.imwrite(name, res)
     return res
 
+
 def compute_threshold(img, fname, small):
     '''Use Canny edge detection to find the contours, 
     Sort the contours into ellipses and then filter out ellipses 
@@ -74,8 +75,8 @@ def compute_threshold(img, fname, small):
     # Grab the two largest rectangles
     # Enter this loop if it's the second handle parsing
     if small is True:
-        rectangles.sort(key = lambda rectangle: rectangle[1][0] * rectangle[1][1],
-            reverse = True)
+        rectangles.sort(key=lambda rectangle: rectangle[1][0] * rectangle[1][1],
+                        reverse=True)
         r = rectangles[0:2]
 
         if len(r) > 0:
@@ -87,7 +88,7 @@ def compute_threshold(img, fname, small):
 
             # Draw the largest rectangle
             # Convert the minAreaRect to box points
-            # to properly draw the contour 
+            # to properly draw the contour
             box = cv2.cv.BoxPoints(r[0])
             box = np.int0(box)
             cv2.drawContours(img, [box], 0, (255, 0, 0), 2)
@@ -117,13 +118,10 @@ def compute_threshold(img, fname, small):
         rectangles.sort(
             key=lambda rectangle: rectangle[2] * rectangle[3], reverse=True)
 
-        r = rectangles[0:2]
+        r = rectangles[0:3]
 
         if len(r) > 0:
             x1, y1, w1, h1 = r[0]
-
-            if h1 > w1:
-                vertical = True
 
             cv2.rectangle(img, (x1, y1), (x1 + w1, y1 + h1), (255, 0, 0), 2)
             finalRect.append(r[0])
@@ -133,18 +131,26 @@ def compute_threshold(img, fname, small):
             # within the first rectangle
             x2, y2, w2, h2 = r[1]
 
-            if h2 > w2:
-                vertical = True
-
-            if (x1 <= x2 and x2 <= x1 + w1) and (y1 <= y2 and y2 <= y1 + h1):
+            if (x1 - 0.5 * w1 <= x2 and x2 <= x1 + w1) and (y1 - 0.5 * h1 <= y2 and y2 <= y1 + h1):
                 repeat = True
 
             # Draw the second rect. if not a repeat
             # Also draw if the second rect is not vertical and not small
             if repeat is False:
-                cv2.rectangle(img, (x2, y2), (x2 + w2, y2 + h2), (255, 0, 0), 2)
+                cv2.rectangle(
+                    img, (x2, y2), (x2 + w2, y2 + h2), (255, 0, 0), 2)
                 finalRect.append(r[1])
 
+            else:
+                x3, y3, w3, h3 = r[2]
+                if (x1 - 0.5 * w1 <= x3 and x3 <= x1 + w1) and\
+                    (y1 - 0.5 * h1 <= y3 and y3 <= y1 + h1):
+                    repeat = True
+
+                if repeat is False:
+                    cv2.rectangle(
+                        img, (x3, y3), (x3 + w3, y3 + h3), (255, 0, 0), 2)
+                    finalRect.append(r[1])
         # Save the result
         cv2.imwrite(fname, img)
 

@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 import urllib
 import math
 import glob
+import re
 from scipy import ndimage
 from find_rectangles import *
 from stereo_calibrate import *
@@ -17,6 +18,7 @@ from stereo_calibrate import *
 #     from PIL import Image
 # import pytesseract
 
+
 def imageName(folder, name):
     '''Create the proper img name path'''
     if len(folder) != 0:
@@ -26,14 +28,16 @@ def imageName(folder, name):
 
     return imgName
 
+
 def splitString(name):
     '''Extract the numbers from the img name'''
     vals = name.split('_')
     y = vals[-1].split('.')[0]
-    val1 = [float(vals[-6]), float(vals[-5]), float(vals[-4]), \
-        float(vals[-3]), float(vals[-2]), float(y)]
+    val1 = [float(vals[-6]), float(vals[-5]), float(vals[-4]),
+            float(vals[-3]), float(vals[-2]), float(y)]
 
     return val1
+
 
 def findRectangle(stereoCams, folder, imsize, L_name, R_name, loc):
     '''Locate rectangles in a set of images
@@ -53,11 +57,12 @@ def findRectangle(stereoCams, folder, imsize, L_name, R_name, loc):
     # Rectify the images
     left = 'rectify_imgL' + loc + '.png'
     right = 'rectify_imgR' + loc + '.png'
-    r_imgL, r_imgR = rectifyImage(imgL_unrect, imgR_unrect, imsize, stereoCams, folder, right, left)
+    r_imgL, r_imgR = rectifyImage(
+        imgL_unrect, imgR_unrect, imsize, stereoCams, folder, right, left)
 
     # Create all image names needed
-    h1 = imageName(folder,'handlesL.png')
-    h2 = imageName(folder,'handlesR.png')
+    h1 = imageName(folder, 'handlesL.png')
+    h2 = imageName(folder, 'handlesR.png')
     hL_name = imageName(folder, 'filtered_ellipse_L' + loc + '.png')
     hR_name = imageName(folder, 'filtered_ellipse_R' + loc + '.png')
 
@@ -79,14 +84,22 @@ def findRectangle(stereoCams, folder, imsize, L_name, R_name, loc):
 
     return rectL, rectR
 
+
 def calcLength(rect):
     '''Return the length of the rectangle by 
     finding the max value between the rect's width and height'''
 
-    x, y, w, h = np.array(rect).ravel()
+    if len(rect) == 3:
+        x, y = rect[0]
+        w, h = rect[1]
+
+    else:
+        x, y, w, h = np.array(rect).ravel()
+        
     length = max(w, h)
 
     return length
+
 
 def findDistance(L, R, imsize, stereoCams, folder):
     '''Call findRectangles to locate the two largest
@@ -106,6 +119,7 @@ def findDistance(L, R, imsize, stereoCams, folder):
 
     return rectL, rectR, location
 
+
 def distLengthPredict(stereoCams, length, obj_real_world):
     '''Compute the estimated distance to the handle
     using its actual real world length (mm) and its estimated 
@@ -115,16 +129,16 @@ def distLengthPredict(stereoCams, length, obj_real_world):
 
     return = estimated distance to the ISS
     '''
-    # Compute the calibrated focal length using both L and R 
+    # Compute the calibrated focal length using both L and R
     # camera matrices
     fL = np.mean([stereoCams.M1[0][0], stereoCams.M1[1][1]])
     fR = np.mean([stereoCams.M2[0][0], stereoCams.M2[1][1]])
     f1 = np.mean([fL, fR])
 
-    f_img = 35. #Actual Focal Length  
-    m = f1 / f_img # Scaling ratio
+    f_img = 35.  # Actual Focal Length
+    m = f1 / f_img  # Scaling ratio
     # Length of image on the camera sensor
-    sensor = length / m 
+    sensor = length / m
 
     # Estimate the distance
     distance = obj_real_world * f_img / sensor
@@ -198,12 +212,12 @@ def prepareImage(images):
 
         cv2.imwrite(img_contour, dst)
 
-        # Save the image names 
+        # Save the image names
         handle_contour.append(img_contour)
-        plt.imshow(dst)
-        plt.show()
+        # plt.imshow(dst)
+        # plt.show()
 
-        return handle_contour
+    return handle_contour
 
 
 def TesseractOCR(images, rect):
@@ -219,16 +233,23 @@ def TesseractOCR(images, rect):
         # Read all text from the image
         digit_str = (pytesseract.image_to_string(Image.open(i)))
         print digit_str
-        digit_str = digit_str.split(' ')
+        digit_str = re.sub('[^0-9]', ' ', digit_str)
+
+        if len(digit_str) > 0 and digit_str[0] == ' ':
+            digit_str = digit_str[1:].split(' ')
+        else:
+            digit_str = digit_str.split(' ')
 
         # Keep only digits from the image
         for j in digit_str:
             if j.isdigit() is True:
-                digit.append(int(j))
-                length = calcLength(r)
-                rectMatch.append(length)
+                if len(str(j)) == 4:
+                    digit.append(int(j))
+                    length = calcLength(r)
+                    rectMatch.append(length)
 
     return digit, rectMatch
+
 
 def smallerRectImage(img_name):
     '''Recrop the image to the smaller handle tag
@@ -239,34 +260,48 @@ def smallerRectImage(img_name):
     # crop out extra noise before extracting new rect
     im = cv2.imread(img_name)
     h, w, _ = im.shape
-    q = h/4
-    crop = im[10 + q: 3 * q, 0.2 * w :w * 0.8]
+    q = h / 4
+    crop = im[10 + q: 3. * q, 0.2 * w:w * 0.8]
 
+    new_rect = compute_threshold(crop, img_name, False)
+    
+    if len(new_rect) > 0:
+        if len(new_rect) > 1:
+            x, y, w, h = new_rect[-1]
+            if h > w:
+                x, y, w, h = new_rect[0]
+        else:
+            x, y, w, h = new_rect[0]
+
+        crop2 = crop[y:y + h, x + 0.1 * w: x + 0.9 * w]
+
+        cv2.imwrite(img_name, crop2)
     # Save cropped result
-    cv2.imwrite(img_name, crop)
+    # cv2.imwrite(img_name, crop)
 
     # fxn subimage needs a cv image
-    img = cv.LoadImage(img_name)
+    # img = cv.LoadImage(img_name)
 
-    rect = compute_threshold(crop, img_name, True)
+    # rect = compute_threshold(crop, img_name, True)
 
-    for i, r in zip(range(len(rect)), rect):
-        centre = r[0]
-        w, h = np.int0(r[1])
-        theta = np.radians(r[-1])
+    # for i, r in zip(range(len(rect)), rect):
+    #     centre = r[0]
+    #     w, h = np.int0(r[1])
+    #     theta = np.radians(r[-1])
 
-        # Crop image and save image name
-        cropped = subimage(img, centre, theta, w, h)
-        cL_name = img_name
-        cv.SaveImage(cL_name, cropped)
-
-        # check if the image needs to be rotated
-        # if so, read in a cv2 image
-        if h > w:
-            rot_img = cv2.imread(cL_name)
-            cv2.imwrite(cL_name, ndimage.rotate(rot_img, 90))
+    # Crop image and save image name
+    #     cropped = subimage(img, centre, theta, w, h)
+    #     cL_name = img_name
+    #     cv.SaveImage(cL_name, cropped)
+    #     break
+    # check if the image needs to be rotated
+    # if so, read in a cv2 image
+    #     if h > w:
+    #         rot_img = cv2.imread(cL_name)
+    #         cv2.imwrite(cL_name, ndimage.rotate(rot_img, 90))
 
     return img_name
+
 
 def subimage(image, centre, theta, width, height):
     '''Crop the image to fit the rotated rectangle found in smallerRectImage()
@@ -281,8 +316,8 @@ def subimage(image, centre, theta, width, height):
     '''
 
     # Create the image using the inputted params
-    output_image = cv.CreateImage((width, height), image.depth, \
-        image.nChannels)
+    output_image = cv.CreateImage((width, height), image.depth,
+                                  image.nChannels)
 
     # Create the new rotation mapping matrix
     mapping = np.array([[np.cos(theta), -np.sin(theta), centre[0]],
@@ -291,8 +326,9 @@ def subimage(image, centre, theta, width, height):
     # Crop the image
     map_matrix_cv = cv.fromarray(mapping)
     cv2.cv.GetQuadrangleSubPix(image, output_image, map_matrix_cv)
-    
+
     return output_image
+
 
 def cropImage(img_name, rect, name, direc):
     '''Crop the image down to the approx. handle size
@@ -320,7 +356,8 @@ def cropImage(img_name, rect, name, direc):
 
     return name_vec
 
-def lastParseAttempt(cnt_name, rect):
+
+def lastParseAttempt(img, cv_img, img_name, rect):
     '''If the background of the handle tag is too dark 
     for Tesseract, reverse the tag's colors. This will likely make
     the background white, and the handle number black, allowing Tesseract to 
@@ -328,11 +365,43 @@ def lastParseAttempt(cnt_name, rect):
 
     return = the calculated digit and corresponding handle length
     '''
-    img = cv2.imread(cnt_name)
-    cv2.imwrite(cnt_name, 255 - img)
+    h, w, _ = img.shape
+    q = h / 4
+    # crop = img[10 + q: 3. * q, 0.2 * w: w * 0.8]
+    # img = cv.LoadImage(img_name)
 
-    digit, length = TesseractOCR(cnt_name, rect)
+    rect = compute_threshold(img, img_name, True)
+
+    for i, r in zip(range(len(rect)), rect):
+        centre = r[0]
+        x, y = centre
+        w, h = np.int0(r[1])
+        theta = np.radians(r[-1])
+
+        # Crop image and save image name
+        cropped = subimage(cv_img, centre, theta, w, h)
+        cL_name = img_name
+        cv.SaveImage(cL_name, cropped)
+            
+        # check if the image needs to be rotated
+        # if so, read in a cv2 image
+        if h > w:
+            rot_img = cv2.imread(cL_name)
+            cv2.imwrite(cL_name, ndimage.rotate(rot_img, 90))
+
+    digit, length = TesseractOCR([img_name], rect) #[(x, y, w, h)])
+
+    if len(digit) < 1 or (len(digit) > 0 and len(str(digit[0])) < 4):
+        img = cv2.imread(img_name)
+        cv2.imwrite(img_name, 255 - img)
+
+        digit, length = TesseractOCR([img_name], rect) #[(x, y, w, h)])
+
+    if len(digit) > 0 and len(str(digit[0])) < 4:
+        digit = []
+
     return digit, length
+
 
 def matchHandle(digit):
     '''Match the ocr-read handle number to the existing
@@ -360,7 +429,15 @@ def matchHandle(digit):
                [1169, 8.64 * convert, w],
                [1173, 8.64 * convert, w],
                [1186, 22.7 * convert, w],
-               [1212, 8.64 * convert, w]
+               [1212, 8.64 * convert, w],
+               [1139, 8.64 * convert, w],
+               [1148, 22.7 * convert, w],
+               [1154, 22.7 * convert, w],
+               [1159, 22.7 * convert, w],
+               [1165, 8.64 * convert, w],
+               [1153, 22.7 * convert, w],
+               [1138, 8.64 * convert, w],
+               [1147, 22.7 * convert, w],
                ]
 
     matches = []
@@ -371,6 +448,43 @@ def matchHandle(digit):
             matches.append(np.array(handles[idx]))
 
     return matches
+
+def DigitSearch(cnt, rect):
+    digit, length = TesseractOCR(cnt, rect)
+
+    # If no digit was found, crop image to approx. tag size
+    if len(digit) is 0:
+        orig_img = cv2.imread(cnt[0])
+        cv_img = cv.LoadImage(cnt[0])
+
+        cnt_new = []
+        for i in cnt:
+            c = smallerRectImage(i)
+            cnt_new.append(c)
+
+        digit, length = TesseractOCR(cnt_new, rect)
+
+        # If Tesseract can't recognize the number, reverse its color
+        if len(digit) is 0 or len(str(digit[0])) < 4:
+            digit, length = lastParseAttempt(orig_img, cv_img, \
+                cnt_new[0], rect)
+
+    return digit, length
+
+def HandleMatchDist(digit, length_vec):
+    distance = []
+    if len(digit) is not 0:
+        # Match the handle to info in the database
+        handleProperties = matchHandle(digit)
+
+        # Predict the distance to the handle
+        for h, length in zip(handleProperties, length_vec):
+            n, l, w = h
+            obj_real_world = l
+            d = distLengthPredict(stereoCams, length, obj_real_world)
+            distance.append(np.array([n, d]))
+
+    return distance
 
 def computeAvgDistance(distanceL, distanceR):
     '''Compute the average distance to the ISS
@@ -429,7 +543,8 @@ def computeAvgDistance(distanceL, distanceR):
             for dL in distanceL:
                 idx = []
                 idx = [i for i, x in enumerate(distanceR) if x[0] == dL[0]]
-                index.append(idx[0])
+                if len(idx) > 0:
+                    index.append(idx[0])
 
                 # Match found
                 if len(idx) > 0:
@@ -443,23 +558,39 @@ def computeAvgDistance(distanceL, distanceR):
             # Print any remaining R handle matches
             if len(index) != len(distanceR):
                 for i in range(len(distanceR)):
-                    if i not in j is True:
-                        print 'Handle: ', distanceR[i][0], ' Distance: ',
+                    if distanceR[i] not in enumerate(distanceL):
+                        print 'Handle: ', distanceR[i][0], ' Distance: ', \
                         distanceR[i][1]
 
-#######################################################################################3
+
 imsize, stereoCams = stereoCalibration()
 
-images = glob.glob("ocr/input/25/handle_*.jpeg")
+# Laptop
 imgsL = glob.glob("ocr/input/25/left/left_*.jpeg")
 imgsR = glob.glob("ocr/input/25/right/right_*.jpeg")
+
+# Desktop
+# imgsL = sorted(glob.glob("ocr/left/left_*.jpeg"))
+# imgsR = sorted(glob.glob("ocr/right/right_*.jpeg"))
 # handle dimensions (number), (length), (width)
 # unit = inches
 
 
+# folder = "ocr/joint"  
 folder = "ocr/input/25/joint"
 rectangleL, rectangleR = [], []
+
+# imgsL = imgsL[-8:]
+# imgsR = imgsR[-8:]
+# rectangleL = rectangleL[-8:]
+# rectangleR = rectangleR[-8:]
+
+# for L, R, rectL, rectR in zip(imgsL, imgsR, rectangleL, rectangleR):
 for L, R in zip(imgsL, imgsR):
+
+    x, y, z, p, yw, r = splitString(L)
+    loc = str(x) + '_' + str(y) + '_' + str(z)
+    print loc
 
     rectL, rectR, loc = findDistance(L, R, imsize, stereoCams, folder)
     rL_name = imageName(folder, 'rectify_imgL' + loc + '.png')
@@ -471,67 +602,79 @@ for L, R in zip(imgsL, imgsR):
     print 'left images'
     cropL_name = cropImage(rL_name, rectL, cL_name, 'L')
     cntL = prepareImage(cropL_name)
-    # digitL, lengthL = TesseractOCR(cntL, rectL)
-
-    # If no digit was found, crop image to approx. tag size
-    if len(digitL) is 0:
-        cntL_new = []
-        for i in cntL:
-            cnt = smallerRectImage(i)
-            cntL_new.append(cnt)
-
-        # digitL, lengthL = TesseractOCR(cntL_new, rectL)
-
-        # If Tesseract can't recognize the number, reverse its color
-        if len(digitL) is 0:
-            digitL, lengthL = lastParseAttempt(cntL_new[0], rectL)
+    # digitL, lengthL = DigitSearch(cntL, rectL)
 
     print 'right images'
     cropR_name = cropImage(rR_name, rectR, cR_name, 'R')
     cntR = prepareImage(cropR_name)
-    # digitR, lengthR = TesseractOCR(cntR, rectR)
-
-    # If no digit was found, crop image to approx. tag size
-
-    if len(digitR) is 0:
-        cntR_new = []
-        for i in cntR:
-            cnt = smallerRectImage(i)
-            cntR_new.append(cnt)
-
-        # digitR, lengthR = TesseractOCR(cntR_new, rectR)
-
-        # If Tesseract can't recognize the number, reverse its color
-        if len(digitR) is 0:
-            digitR, lengthR = lastParseAttempt(cntR_new[0], rectR)
+    # digitR, lengthR = DigitSearch(cntR, rectR)
 
     rectangleR.append(rectR)
     rectangleL.append(rectL)
     plt.close('all')
-    # digitL = [1141]
-    # digitR = [1141]
-    # distanceL, distanceR = [], []
-    # side = 0.
-    # if len(digitL) is not 0:
-    #     # Match the handle to info in the database
-    #     handlePropertiesL = matchHandle(digitL)
 
-    #     # Predict the distance to the handle
-    #     for h, length in zip(handlePropertiesL, lengthL):
-    #         n, l, w = h
-    #         obj_real_world = l
-    #         d = distLengthPredict(stereoCams, length, obj_real_world)
-    #         distanceL.append(np.array([n, d]))
-
-    # if len(digitR) is not 0:
-    #     handlePropertiesR = matchHandle(digitR)
-
-    #     for h, length in zip(handlePropertiesR, lengthR):
-    #         n, l, w = h
-    #         obj_real_world = l
-    #         d = distLengthPredict(stereoCams, length, obj_real_world)
-    #         distanceR.append(np.array([n, d]))
+    # distanceL = HandleMatchDist(digitL, lengthL)
+    # distanceR = HandleMatchDist(digitR, lengthR)
 
     # computeAvgDistance(distanceL, distanceR)
-    # print '############################################'
+    print '############################################'
     # break
+
+# data = [[0, 18.67],
+#         [1, 20.06],
+#         [2, 21.58],
+#         [3, 21.83],
+#         [4, 18.92],
+#         [5, 22.56],
+#         [6, 23.64],
+#         [7, 21.42],
+#         [8, 22.58],
+#         [9, 18.27],
+#         [10, 19.08],
+#         [11, 30.90],
+#         [12, None],
+#         [13, 17.87],
+#         [14, 27.34],
+#         [14, 21.26],
+#         [15, None],
+#         [16, 21.48],
+#         [17, 17.61],
+#         [18, 18.57],
+#         [18, 20.19],
+#         [19, 18.65]
+#         ]
+
+# actual = [[0, 27],
+#         [1, 27],
+#         [2, 27],
+#         [3, 27],
+#         [4, 27],
+#         [5, 27],
+#         [6, 26],
+#         [7, 26],
+#         [8, 26],
+#         [9, 26],
+#         [10, 26],
+#         [11, 26],
+#         [12, 26],
+#         [13, 25],
+#         [14, 25],
+#         [14, 25],
+#         [15, 25],
+#         [16, 25],
+#         [17, 25],
+#         [18, 25],
+#         [18, 25],
+#         [19, 25]
+#         ]
+
+# d = pd.DataFrame(data)
+# a = pd.DataFrame(actual)
+# d[3] = a[1]-2-d[1]
+
+# error = d[3]
+# error.describe()
+
+# plt.plot(d[0], d[1], 'b.')
+# plt.plot(a[0], a[1] - 2 -d[1], 'r.')
+# plt.show()
