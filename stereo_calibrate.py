@@ -91,7 +91,7 @@ class StereoCam:
         K = camera_matrix
         d = np.array([dist_coefs[0][0], dist_coefs[0][1], 0, 0, 0])
 
-        img = cv2.imread('calibration042015/left/l_0.jpeg')
+        img = cv2.imread('calibration_samples/calibration042015/left/l_0.jpeg')
         h, w = img.shape[:2]
 
         # Update the StereoCam camera matrix with the optimal camera matrix 
@@ -186,7 +186,7 @@ def calibrateImages(obj_pts, ptsL, ptsR, imsize):
     # Perform Stereo Calibration
     retval, cam1, dist1, cam2, dist2, R, T, E, F = \
         cv2.stereoCalibrate(
-            obj_pts, ptsL, ptsR, imsize)  # , cam1, None, cam2, None)
+            obj_pts, ptsL, ptsR, imsize)
     dist1 = dist1.ravel()
     dist2 = dist2.ravel()
 
@@ -195,16 +195,6 @@ def calibrateImages(obj_pts, ptsL, ptsR, imsize):
     cameraObj.cam2, cameraObj.dist2 = cam2, dist2
 
     cameraObj.R, cameraObj.T, cameraObj.E, cameraObj.F = R, T, E, F
-
-    # cam1 = np.array([[1.53216158e+03, 0., 8.96615289e+02],
-    #                 [0., 1.43951272e+03, 5.44758043e+02],
-    #                 [0., 0., 1.]])
-    # dist1 = np.array([0.03702081, 0.85215103, 0.00343193, -0.02808688, -1.08401299])
-
-    # cam2 = np.array([[1.4409744e+03, 0., 7.74076208e+02],
-    #                 [0., 1.42435001e+03, 5.27489490e+02],
-    #                 [0., 0., 1.]])
-    # dist2 = np.array([-0.23991173, 1.3750377, -0.03521028, -0.06381475, -3.57839555])
 
     # Perform Stereo Rectification
     (R1, R2, P1, P2, Q, roi1, roi2) = \
@@ -280,11 +270,11 @@ def computeDisparity(r_imgL, r_imgR, cameraObj):
     window_size = 9
     min_disp = 0  # 20
     max_disp = w / 8  # image width / 8
-    num_disp = max_disp - min_disp  # 52 - min_disp # 26
+    num_disp = max_disp - min_disp 
     stereo = cv2.StereoSGBM(minDisparity=min_disp,
                             numDisparities=num_disp,
                             SADWindowSize=window_size,
-                            uniquenessRatio=10,  # 5,
+                            uniquenessRatio=10,
                             speckleWindowSize=100,
                             speckleRange=32,
                             disp12MaxDiff=1,
@@ -297,7 +287,7 @@ def computeDisparity(r_imgL, r_imgR, cameraObj):
 
     # Normalize the values
     disp = stereo.compute(r_imgL, r_imgR).astype(
-        np.float32) / 16.  # max_disp #/52.
+        np.float32) / 16. 
 
     # Update the Q matrix
     cx = cameraObj.M1[0][-1]
@@ -350,8 +340,8 @@ def stereoCalibration():
     stereoCams = calibrateImages(obj_pts, ptsL, ptsR, imsize)
 
     # Update the individual camera matrices
-    M_imagesL = sorted(glob.glob('calibration042015/left/l_*.jpeg'))
-    M_imagesR = sorted(glob.glob('calibration042015/right/r_*.jpeg'))
+    M_imagesL = sorted(glob.glob('calibration_samples/calibration042015/left/l_*.jpeg'))
+    M_imagesR = sorted(glob.glob('calibration_samples/calibration042015/right/r_*.jpeg'))
 
     stereoCams.findM(M_imagesL, 1)
     stereoCams.findM(M_imagesR, 2)

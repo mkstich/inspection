@@ -7,17 +7,41 @@ import urllib
 import math
 import glob
 import re
+import pandas as pd
 from scipy import ndimage
 from find_rectangles import *
 from stereo_calibrate import *
 
+# Import pytesseract library
+try:
+    import Image
+except ImportError:
+    from PIL import Image
+import pytesseract
 
-# try:
-#     import Image
-# except ImportError:
-#     from PIL import Image
-# import pytesseract
 
+class KalmanFilter(object):
+    def __init__(self, process_var, measurement_var):
+        self.process_var = process_var
+        self.measurement_var = measurement_var
+        self.posteri_est = None
+        self.posteri_error_est = 1.0
+
+    # Update a Kalman Filter with the measured value
+    def update(self, measurement):
+        if self.posteri_est is None:
+            self.posteri_est = measurement
+
+        priori_est = self.posteri_est
+        priori_error_est = self.posteri_error_est + self.process_var
+
+        gain = priori_error_est / (priori_error_est + self.measurement_var)
+        self.posteri_est = priori_est + gain * (measurement - priori_est)
+        self.posteri_error_est = (1 - gain) * priori_error_est
+
+    # Predict a filtered value for the measured value
+    def predict(self):
+        return self.posteri_est
 
 def imageName(folder, name):
     '''Create the proper img name path'''
@@ -63,8 +87,8 @@ def findRectangle(stereoCams, folder, imsize, L_name, R_name, loc):
     # Create all image names needed
     h1 = imageName(folder, 'handlesL.png')
     h2 = imageName(folder, 'handlesR.png')
-    hL_name = imageName(folder, 'filtered_ellipse_L' + loc + '.png')
-    hR_name = imageName(folder, 'filtered_ellipse_R' + loc + '.png')
+    hL_name = imageName(folder, 'filtered_rect_L' + loc + '.png')
+    hR_name = imageName(folder, 'filtered_rect_R' + loc + '.png')
 
     rL_name = imageName(folder, 'rectify_imgL' + loc + '.png')
     rR_name = imageName(folder, 'rectify_imgR' + loc + '.png')
@@ -140,7 +164,7 @@ def distLengthPredict(stereoCams, length, obj_real_world):
     # Length of image on the camera sensor
     sensor = length / m
 
-    # Estimate the distance
+    # Estimate the distance using the pinhole projection model
     distance = obj_real_world * f_img / sensor
 
     # convert from mm to inches
@@ -214,8 +238,6 @@ def prepareImage(images):
 
         # Save the image names
         handle_contour.append(img_contour)
-        # plt.imshow(dst)
-        # plt.show()
 
     return handle_contour
 
@@ -233,6 +255,7 @@ def TesseractOCR(images, rect):
         # Read all text from the image
         digit_str = (pytesseract.image_to_string(Image.open(i)))
         print digit_str
+        # Keep only the numbers and separate each number with a ' '
         digit_str = re.sub('[^0-9]', ' ', digit_str)
 
         if len(digit_str) > 0 and digit_str[0] == ' ':
@@ -240,7 +263,7 @@ def TesseractOCR(images, rect):
         else:
             digit_str = digit_str.split(' ')
 
-        # Keep only digits from the image
+        # Keep only 4 - numbered handle digits from the image
         for j in digit_str:
             if j.isdigit() is True:
                 if len(str(j)) == 4:
@@ -276,29 +299,6 @@ def smallerRectImage(img_name):
         crop2 = crop[y:y + h, x + 0.1 * w: x + 0.9 * w]
 
         cv2.imwrite(img_name, crop2)
-    # Save cropped result
-    # cv2.imwrite(img_name, crop)
-
-    # fxn subimage needs a cv image
-    # img = cv.LoadImage(img_name)
-
-    # rect = compute_threshold(crop, img_name, True)
-
-    # for i, r in zip(range(len(rect)), rect):
-    #     centre = r[0]
-    #     w, h = np.int0(r[1])
-    #     theta = np.radians(r[-1])
-
-    # Crop image and save image name
-    #     cropped = subimage(img, centre, theta, w, h)
-    #     cL_name = img_name
-    #     cv.SaveImage(cL_name, cropped)
-    #     break
-    # check if the image needs to be rotated
-    # if so, read in a cv2 image
-    #     if h > w:
-    #         rot_img = cv2.imread(cL_name)
-    #         cv2.imwrite(cL_name, ndimage.rotate(rot_img, 90))
 
     return img_name
 
@@ -367,8 +367,6 @@ def lastParseAttempt(img, cv_img, img_name, rect):
     '''
     h, w, _ = img.shape
     q = h / 4
-    # crop = img[10 + q: 3. * q, 0.2 * w: w * 0.8]
-    # img = cv.LoadImage(img_name)
 
     rect = compute_threshold(img, img_name, True)
 
@@ -479,7 +477,7 @@ def HandleMatchDist(digit, length_vec):
 
         # Predict the distance to the handle
         for h, length in zip(handleProperties, length_vec):
-            n, l, w = h
+            n, l, w = h # n = number, l = length, w = width 
             obj_real_world = l
             d = distLengthPredict(stereoCams, length, obj_real_world)
             distance.append(np.array([n, d]))
@@ -565,25 +563,13 @@ def computeAvgDistance(distanceL, distanceR):
 
 imsize, stereoCams = stereoCalibration()
 
-# Laptop
-imgsL = glob.glob("ocr/input/25/left/left_*.jpeg")
-imgsR = glob.glob("ocr/input/25/right/right_*.jpeg")
-
-# Desktop
-# imgsL = sorted(glob.glob("ocr/left/left_*.jpeg"))
-# imgsR = sorted(glob.glob("ocr/right/right_*.jpeg"))
+imgsL = sorted(glob.glob("distance/input/left/left_*.jpeg"))
+imgsR = sorted(glob.glob("distance/input/right/right_*.jpeg"))
 # handle dimensions (number), (length), (width)
 # unit = inches
 
-
-# folder = "ocr/joint"  
-folder = "ocr/input/25/joint"
+folder = "distance/sim_images"
 rectangleL, rectangleR = [], []
-
-# imgsL = imgsL[-8:]
-# imgsR = imgsR[-8:]
-# rectangleL = rectangleL[-8:]
-# rectangleR = rectangleR[-8:]
 
 # for L, R, rectL, rectR in zip(imgsL, imgsR, rectangleL, rectangleR):
 for L, R in zip(imgsL, imgsR):
@@ -602,79 +588,110 @@ for L, R in zip(imgsL, imgsR):
     print 'left images'
     cropL_name = cropImage(rL_name, rectL, cL_name, 'L')
     cntL = prepareImage(cropL_name)
-    # digitL, lengthL = DigitSearch(cntL, rectL)
+    digitL, lengthL = DigitSearch(cntL, rectL)
 
     print 'right images'
     cropR_name = cropImage(rR_name, rectR, cR_name, 'R')
     cntR = prepareImage(cropR_name)
-    # digitR, lengthR = DigitSearch(cntR, rectR)
+    digitR, lengthR = DigitSearch(cntR, rectR)
 
     rectangleR.append(rectR)
     rectangleL.append(rectL)
     plt.close('all')
 
-    # distanceL = HandleMatchDist(digitL, lengthL)
-    # distanceR = HandleMatchDist(digitR, lengthR)
+    distanceL = HandleMatchDist(digitL, lengthL)
+    distanceR = HandleMatchDist(digitR, lengthR)
 
-    # computeAvgDistance(distanceL, distanceR)
+    computeAvgDistance(distanceL, distanceR)
     print '############################################'
-    # break
 
-# data = [[0, 18.67],
-#         [1, 20.06],
-#         [2, 21.58],
-#         [3, 21.83],
-#         [4, 18.92],
-#         [5, 22.56],
-#         [6, 23.64],
-#         [7, 21.42],
-#         [8, 22.58],
-#         [9, 18.27],
-#         [10, 19.08],
-#         [11, 30.90],
-#         [12, None],
-#         [13, 17.87],
-#         [14, 27.34],
-#         [14, 21.26],
-#         [15, None],
-#         [16, 21.48],
-#         [17, 17.61],
-#         [18, 18.57],
-#         [18, 20.19],
-#         [19, 18.65]
-#         ]
+# Filter the Predicted Distances #############################
+# Compute Data Statistics ####################################
+# Predicted handle distances
+data = [[0, 18.67],
+        [1, 20.06],
+        [2, 21.58],
+        [3, 21.83],
+        [4, 18.92],
+        [5, 22.56],
+        [6, 23.64],
+        [7, 21.42],
+        [8, 22.58],
+        [9, 18.27],
+        [10, 19.08],
+        [11, 30.90],
+        [12, None],
+        [13, 17.87],
+        [14, 27.34],
+        [14, 21.26],
+        [15, None],
+        [16, 21.48],
+        [17, 17.61],
+        [18, 18.57],
+        [18, 20.19],
+        [19, 18.65]
+        ]
+# # Actual handle distances
+actual = [[0, 27],
+        [1, 27],
+        [2, 27],
+        [3, 27],
+        [4, 27],
+        [5, 27],
+        [6, 26],
+        [7, 26],
+        [8, 26],
+        [9, 26],
+        [10, 26],
+        [11, 26],
+        [12, 26],
+        [13, 25],
+        [14, 25],
+        [14, 25],
+        [15, 25],
+        [16, 25],
+        [17, 25],
+        [18, 25],
+        [18, 25],
+        [19, 25]
+        ]
 
-# actual = [[0, 27],
-#         [1, 27],
-#         [2, 27],
-#         [3, 27],
-#         [4, 27],
-#         [5, 27],
-#         [6, 26],
-#         [7, 26],
-#         [8, 26],
-#         [9, 26],
-#         [10, 26],
-#         [11, 26],
-#         [12, 26],
-#         [13, 25],
-#         [14, 25],
-#         [14, 25],
-#         [15, 25],
-#         [16, 25],
-#         [17, 25],
-#         [18, 25],
-#         [18, 25],
-#         [19, 25]
-#         ]
+d = pd.DataFrame(data)
+a = pd.DataFrame(actual)
+handle_depth = 2.88 # value from NASA specs
+d[3] = abs(a[1]-handle_depth-d[1])
 
-# d = pd.DataFrame(data)
-# a = pd.DataFrame(actual)
-# d[3] = a[1]-2-d[1]
+# compute error stats
+error = pd.DataFrame()
+error[0] = d[3]
+error[0].describe()
 
-# error = d[3]
-# error.describe()
+# Create Kalman Filter
+Q, R = 1., 10.
+kf = KalmanFilter(Q, R)
+distance = []
 
-# plt.plot(d[0], d[1], 'b.')
-# plt.plot(a[0], a[1] - 2 -d[1], 'r.')
-# plt.show()
+for i, num in zip(d[1], d[0]):
+    # Update value using KF if it's finite
+    if np.isfinite(i):
+        kf.update(i)
+        new_dist = kf.predict()
+        distance.append([num, new_dist])
+    else:
+        distance.append([num, None])
+
+dist = pd.DataFrame(distance)
+dist[2] = abs(a[1] - handle_depth - dist[1])
+error[1] = dist[2]
+error[1].describe()
+
+# Plot Error results
+plt.plot(dist[0]+1, dist[2], 'ro', label = 'filtered')
+plt.plot(d[0] + 1, d[3], 'bo', label = 'unfiltered')
+plt.xticks(np.arange(min(d[0]), max(d[0])+2, 1.0))
+plt.legend(loc = 1)
+plt.ylabel('Relative Error Magnitude (inches)')
+plt.xlabel('Simulation Trial Number')
+plt.title('Relative Distance Error Magnitude')
+plt.savefig('distance/rel_dist_error_filter.pdf')
+plt.show()

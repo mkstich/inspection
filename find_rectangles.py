@@ -123,7 +123,7 @@ def compute_threshold(img, fname, small):
         if len(r) > 0:
             x1, y1, w1, h1 = r[0]
 
-            cv2.rectangle(img, (x1, y1), (x1 + w1, y1 + h1), (255, 0, 0), 2)
+            cv2.rectangle(img, (x1, y1), (x1 + w1, y1 + h1), (0, 255, 0), 2)
             finalRect.append(r[0])
 
             repeat = False
@@ -138,7 +138,7 @@ def compute_threshold(img, fname, small):
             # Also draw if the second rect is not vertical and not small
             if repeat is False:
                 cv2.rectangle(
-                    img, (x2, y2), (x2 + w2, y2 + h2), (255, 0, 0), 2)
+                    img, (x2, y2), (x2 + w2, y2 + h2), (0, 255, 0), 2)
                 finalRect.append(r[1])
 
             else:
