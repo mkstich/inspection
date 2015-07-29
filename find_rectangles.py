@@ -12,8 +12,8 @@ def find_handles(img, name):
 
     return = the calculated bitwise image residual
     '''
-    lower_handles = np.array([20,  20,  0], dtype=np.uint8)  # 35, 50
-    upper_handles = np.array([255, 255, 20], dtype=np.uint8)  # 255, 150, 30
+    lower_handles = np.array([20,  20,  0], dtype=np.uint8)
+    upper_handles = np.array([255, 255, 20], dtype=np.uint8)
 
     # Apply the color range to the image
     RGB = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)

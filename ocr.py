@@ -121,9 +121,9 @@ def calcLength(rect):
         x, y, w, h = np.array(rect).ravel()
         
     length = max(w, h)
+    width = min(w, h)
 
-    return length
-
+    return length, width
 
 def findDistance(L, R, imsize, stereoCams, folder):
     '''Call findRectangles to locate the two largest
@@ -268,7 +268,7 @@ def TesseractOCR(images, rect):
             if j.isdigit() is True:
                 if len(str(j)) == 4:
                     digit.append(int(j))
-                    length = calcLength(r)
+                    length, _ = calcLength(r)
                     rectMatch.append(length)
 
     return digit, rectMatch
@@ -484,6 +484,87 @@ def HandleMatchDist(digit, length_vec):
 
     return distance
 
+def calcDistWithWidth(stereoCams, rect):
+    '''Compute the handrail's relative distance
+    using the handrail's width measurement 
+    '''
+    distance = []
+    width = []
+    for r in rect:
+        l, w = calcLength(r)
+
+        ratio = float(w) / l
+        if ratio > 0.035:
+            width.append(w)
+        
+    for w in width:
+        actual_width = 1.375 * 25.4 #convert width from inch to mm
+        d = distLengthPredict(stereoCams, w, actual_width)
+        distance.append(d)
+
+    return distance
+
+def computeAvgWidth(widthL, widthR, rectL, rectR):
+    '''Compute the average relative distance to the ISS
+    using the handrail's width measurement. If the 
+    handrail's left and right rectangles are within
+    500 pixels, the handrails are considered a match.
+    '''
+    average = []
+    if len(widthL) == len(widthR):
+        for l, r in zip(widthL, widthR):
+            a = np.mean([l, r])
+            print 'Distance from handle width is: ', a
+            average.append(a)
+
+    elif len(widthL) > len(widthR):
+        matches = matchRect(rectL, rectR)
+
+        for idx in matches:
+            if len(idx) is 1:
+                print 'Distance from width is: ', widthL[idx[0]]
+                average.append(widthL[idx[0]])
+            else:
+                print 'Distance using the handle width is: ', np.mean([widthL[idx[0]], widthR[idx[-1]]])
+                average.append(np.mean([widthL[idx[0]], widthR[idx[-1]]]))
+
+    else:
+        matches = matchRect(rectR, rectL)
+
+        for idx in matches:
+            if len(idx) is 1:
+                print 'Distance from width is: ', widthR[idx[0]]
+                average.append(widthR[idx[0]])
+            else:
+                print 'Distance using the handle width is: ', np.mean([widthR[idx[0]], widthL[idx[-1]]])
+                average.append(np.mean([widthR[idx[0]], widthL[idx[-1]]]))
+
+    return average
+
+def matchRect(rect1, rect2):
+    '''
+    Find any matching handrails between the left and 
+    right images. Assume rect1 has more entries than 
+    rect2'''
+    match = []
+
+    for r1 in range(len(rect1)):
+        x1, y1, _, _ = rect1[r1]
+
+        dist = []
+        for r2 in range(len(rect2)):
+            x2, y2, _, _ = rect2[r2]
+            d = math.hypot(x1 - x2, y1 - y2)
+            dist.append([d, [r1, r2]])
+        closest = min(dist)
+
+        if closest[0] < 500.0:
+            match.append(closest[1])
+        else:
+            match.append([r1])
+
+    return match
+
 def computeAvgDistance(distanceL, distanceR):
     '''Compute the average distance to the ISS
     @distanceL = estimated distance in the left img
@@ -570,6 +651,8 @@ imgsR = sorted(glob.glob("distance/input/right/right_*.jpeg"))
 
 folder = "distance/sim_images"
 rectangleL, rectangleR = [], []
+width_L, width_R = [], []
+avg = []
 
 # for L, R, rectL, rectR in zip(imgsL, imgsR, rectangleL, rectangleR):
 for L, R in zip(imgsL, imgsR):
@@ -588,28 +671,35 @@ for L, R in zip(imgsL, imgsR):
     print 'left images'
     cropL_name = cropImage(rL_name, rectL, cL_name, 'L')
     cntL = prepareImage(cropL_name)
+    width_dist_L = calcDistWithWidth(stereoCams, rectL)
     digitL, lengthL = DigitSearch(cntL, rectL)
 
     print 'right images'
     cropR_name = cropImage(rR_name, rectR, cR_name, 'R')
     cntR = prepareImage(cropR_name)
+    width_dist_R = calcDistWithWidth(stereoCams, rectR)
     digitR, lengthR = DigitSearch(cntR, rectR)
 
     rectangleR.append(rectR)
     rectangleL.append(rectL)
+    width_R.append(width_dist_R)
+    width_L.append(width_dist_L)
     plt.close('all')
 
     distanceL = HandleMatchDist(digitL, lengthL)
     distanceR = HandleMatchDist(digitR, lengthR)
 
+    avg.append(computeAvgWidth(width_dist_L, width_dist_R, rectL, rectR))
     computeAvgDistance(distanceL, distanceR)
     print '############################################'
 
 # Filter the Predicted Distances #############################
 # Compute Data Statistics ####################################
-# Predicted handle distances
-data = [[0, 18.67],
+# Predicted handrail distances based on length
+dataL = [[],
+        [0, 18.67],
         [1, 20.06],
+        [],
         [2, 21.58],
         [3, 21.83],
         [4, 18.92],
@@ -631,8 +721,36 @@ data = [[0, 18.67],
         [18, 20.19],
         [19, 18.65]
         ]
-# # Actual handle distances
+
+# Handrail relative distances based on width
+dataW = [[0, 14.95],
+        [0, 20.65],
+        [1, 20.34],
+        [1, 17.79],
+        [2, 18.54],
+        [3, 17.18],
+        [4, 24.64],
+        [5, 24.98],
+        [6, 18.18],
+        [7, 19.57],
+        [8, 17.33],
+        [9, 17.70],
+        [10, 18.09],
+        [11, 15.23],
+        [12, 11.96],
+        [13, 18.99],
+        [14, 18.66],
+        [14, 18.76],
+        [15, 16.42],
+        [16, 17.25],
+        [17, 17.93],
+        [18, 16.67],
+        [18, 16.53],
+        [19, 14.98]]
+# # # Actual handrail distances
 actual = [[0, 27],
+        [0, 27],
+        [1, 27],
         [1, 27],
         [2, 27],
         [3, 27],
@@ -656,22 +774,27 @@ actual = [[0, 27],
         [19, 25]
         ]
 
-d = pd.DataFrame(data)
+dL = pd.DataFrame(dataL)
+dW = pd.DataFrame(dataW)
 a = pd.DataFrame(actual)
 handle_depth = 2.88 # value from NASA specs
-d[3] = abs(a[1]-handle_depth-d[1])
+dL[3] = abs(a[1]-handle_depth-dL[1])
+dW[3] = abs(a[1] - handle_depth - dW[1])
 
-# compute error stats
+# # compute error stats
 error = pd.DataFrame()
-error[0] = d[3]
+error[0] = dL[3]
 error[0].describe()
 
-# Create Kalman Filter
+error[1] = dW[3]
+error[1].describe()
+
+# # Create Kalman Filter
 Q, R = 1., 10.
 kf = KalmanFilter(Q, R)
 distance = []
 
-for i, num in zip(d[1], d[0]):
+for i, num in zip(dL[1], dL[0]):
     # Update value using KF if it's finite
     if np.isfinite(i):
         kf.update(i)
@@ -687,11 +810,42 @@ error[1].describe()
 
 # Plot Error results
 plt.plot(dist[0]+1, dist[2], 'ro', label = 'filtered')
-plt.plot(d[0] + 1, d[3], 'bo', label = 'unfiltered')
-plt.xticks(np.arange(min(d[0]), max(d[0])+2, 1.0))
+plt.plot(dL[0] + 1, dL[3], 'bs', label = 'unfiltered')
+plt.ylim([0, 12])
+plt.xticks(np.arange(min(dW[0]), max(dW[0])+2, 1.0))
 plt.legend(loc = 1)
 plt.ylabel('Relative Error Magnitude (inches)')
 plt.xlabel('Simulation Trial Number')
-plt.title('Relative Distance Error Magnitude')
-plt.savefig('distance/rel_dist_error_filter.pdf')
+plt.title("Relative Distance Error Using the Handrail's Length Magnitude")
+plt.savefig('distance/rel_dist_error_filter_length.pdf')
+plt.show()
+
+##############################################################33333
+Q, R = 2., 3.
+kf = KalmanFilter(Q, R)
+distance = []
+
+for i, num in zip(dW[1], dW[0]):
+    # Update value using KF if it's finite
+    if np.isfinite(i):
+        kf.update(i)
+        new_dist = kf.predict()
+        distance.append([num, new_dist])
+    else:
+        distance.append([num, None])
+
+dist = pd.DataFrame(distance)
+dist[2] = abs(a[1] - handle_depth - dist[1])
+error[1] = dist[2]
+error[1].describe()
+
+# Plot Error results
+plt.plot(dist[0]+1, dist[2], 'ro', label = 'filtered')
+plt.plot(dW[0] + 1, dW[3], 'bs', label = 'unfiltered')
+plt.xticks(np.arange(min(dW[0]), max(dW[0])+2, 1.0))
+plt.legend(loc = 1)
+plt.ylabel('Relative Error Magnitude (inches)')
+plt.xlabel('Simulation Trial Number')
+plt.title("Relative Distance Error Using the Handrail's Width Magnitude")
+plt.savefig('distance/rel_dist_error_filter_width.pdf')
 plt.show()
