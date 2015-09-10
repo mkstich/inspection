@@ -11,6 +11,30 @@ import pandas as pd
 from scipy import ndimage
 from stereo_calibrate import *
 
+
+class KalmanFilter(object):
+    def __init__(self, process_var, measurement_var):
+        self.process_var = process_var
+        self.measurement_var = measurement_var
+        self.posteri_est = None
+        self.posteri_error_est = 1.0
+
+    # Update a Kalman Filter with the measured value
+    def update(self, measurement):
+        if self.posteri_est is None:
+            self.posteri_est = measurement
+
+        priori_est = self.posteri_est
+        priori_error_est = self.posteri_error_est + self.process_var
+
+        gain = priori_error_est / (priori_error_est + self.measurement_var)
+        self.posteri_est = priori_est + gain * (measurement - priori_est)
+        self.posteri_error_est = (1 - gain) * priori_error_est
+
+    # Predict a filtered value for the measured value
+    def predict(self):
+        return self.posteri_est
+
 def imageName(folder, name):
     '''Create the proper img name path'''
     if len(folder) != 0:
@@ -302,6 +326,32 @@ def findAverage(left, right):
 
     return avg, avg_left, avg_right
 
+def applyKalmanFilter(Q, R, vec):
+    # # Create Kalman Filter
+    # Q = process variance
+    # R = measurement variance
+    kf = KalmanFilter(Q, R)
+    kf_distance = []
+
+    for i in vec:
+        # Update value using KF if it's finite
+        if np.isfinite(i):
+            kf.update(i)
+            new_dist = kf.predict()
+            kf_distance.append(new_dist)
+        else:
+            kf_distance.append(None)
+
+    return kf_distance
+
+def boxPlotData(data):
+    data.boxplot(sym = '')
+    plt.title('Estimated Error')
+    plt.xlabel('Relative Distance Approximations')
+    plt.ylabel('Error (Percentage)')
+    plt.savefig('distance/24inch/boxplot_box.pdf')
+    plt.show()
+
 imsize, stereoCams = stereoCalibration()
 
 imgsL = sorted(glob.glob("distance/24inch/left/left_*.jpeg"))
@@ -345,34 +395,73 @@ for L, R in zip(imgsL, imgsR):
 
     print '############################################'
 
-plt.plot(avg_w, label = 'width avg')
-plt.plot(avg_wL, label = 'width L')
-plt.plot(avg_wR, label = 'width R')
+# # Create Kalman Filter
+Q, R = 1., 200.
+actual = [24] * len(filter_avg_l)
+
+# Filtered Width Approximations
+filter_avg_w = applyKalmanFilter(Q, R, avg_w)
+filter_avg_wL = applyKalmanFilter(Q, R, avg_wL)
+filter_avg_wR = applyKalmanFilter(Q, R, avg_wR)
+
+plt.plot(filter_avg_w, 'b-', label = 'filtered average')
+plt.plot(filter_avg_wL, 'r-', label = 'filtered left')
+plt.plot(filter_avg_wR, 'g-', label = 'filtered right')
 plt.ylabel('Relative Distance (inches)')
 plt.xlabel('Trial')
-plt.title('Average Relative Distance - Width Approximation')
-plt.ylim([10., 25.])
-plt.xlim([0., 74.])
-plt.yticks(np.arange(0, 24., 1.0))
+plt.title('Filtered Average Relative Distance - Width Approximation')
 plt.legend(loc = 3)
-plt.savefig('avg_dist_width.pdf')
+plt.ylim([10., 25.])
+plt.savefig('filtered_avg_width.pdf')
 plt.show()
 
-plt.plot(avg_l, label = 'length avg')
-plt.plot(avg_lL, label = 'length L')
-plt.plot(avg_lR, label = 'length R')
+# Filtered Length Approximations
+filter_avg_l = applyKalmanFilter(Q, R, avg_l)
+filter_avg_lL = applyKalmanFilter(Q, R, avg_lL)
+filter_avg_lR = applyKalmanFilter(Q, R, avg_lR)
+
+plt.plot(filter_avg_l, 'b-', label = 'filtered average')
+plt.plot(filter_avg_lL, 'r-', label = 'filtered left')
+plt.plot(filter_avg_lR, 'g-', label = 'filtered right')
 plt.ylabel('Relative Distance (inches)')
 plt.xlabel('Trial')
-plt.title('Average Relative Distance - Length Approximation')
-plt.ylim([10., 25.])
-plt.xlim([0., 74.])
-plt.yticks(np.arange(0, 24., 1.0))
+plt.title('Filtered Average Relative Distance - Length Approximation')
 plt.legend(loc = 3)
-plt.savefig('avg_dist_length.pdf')
+plt.ylim([10., 25.])
+plt.savefig('filtered_avg_length.pdf')
 plt.show()
 
-plt.plot(avg_w, label = 'width avg')
-plt.plot(avg_l, label = 'length avg')
+# plt.plot(avg_w, label = 'width avg')
+# plt.plot(avg_wL, label = 'width L')
+# plt.plot(avg_wR, label = 'width R')
+# plt.ylabel('Relative Distance (inches)')
+# plt.xlabel('Trial')
+# plt.title('Average Relative Distance - Width Approximation')
+# plt.ylim([10., 25.])
+# plt.xlim([0., 74.])
+# plt.yticks(np.arange(0, 24., 1.0))
+# plt.legend(loc = 3)
+# plt.savefig('avg_dist_width.pdf')
+# plt.show()
+
+# plt.plot(avg_l, label = 'length avg')
+# plt.plot(avg_lL, label = 'length L')
+# plt.plot(avg_lR, label = 'length R')
+# plt.ylabel('Relative Distance (inches)')
+# plt.xlabel('Trial')
+# plt.title('Average Relative Distance - Length Approximation')
+# plt.ylim([10., 25.])
+# plt.xlim([0., 74.])
+# plt.yticks(np.arange(0, 24., 1.0))
+# plt.legend(loc = 3)
+# plt.savefig('avg_dist_length.pdf')
+# plt.show()
+
+plt.plot(actual, 'g', label = 'actual rel distance')
+plt.plot(avg_w, 'r--', label = 'width avg')
+plt.plot(filter_avg_w, 'r-', label = 'filtered width')
+plt.plot(avg_l, 'b--', label = 'length avg')
+plt.plot(filter_avg_l, 'b-', label = 'filtered length')
 plt.ylabel('Relative Distance (inches)')
 plt.xlabel('Trial')
 plt.title('Average Relative Distance')
@@ -380,5 +469,30 @@ plt.ylim([10., 25.])
 plt.xlim([0., 74.])
 plt.yticks(np.arange(0, 24., 1.0))
 plt.legend(loc = 3)
-plt.savefig('width_v_length.pdf')
+plt.savefig('filtered_width_v_length.pdf')
 plt.show()
+
+# Error stats ###############################################3
+actual = [24] * len(filter_avg_l)
+actual = np.array(actual)
+filter_avg_l = np.array(filter_avg_l)
+filter_avg_w = np.array(filter_avg_w)
+avg_l = np.array(avg_l)
+avg_w = np.array(avg_w)
+
+filter_error_l = 1. - filter_avg_l / actual
+filter_error_w = 1. - filter_avg_w / actual 
+error_l = 1. - avg_l / actual
+error_w = 1. - avg_w / actual
+
+fe_w = pd.DataFrame(filter_error_w)#.describe()
+fe_l = pd.DataFrame(filter_error_l)#.describe()
+e_w = pd.DataFrame(error_w)#.describe()
+e_l = pd.DataFrame(error_l)#.describe()
+
+result = pd.concat([fe_w, e_w, fe_l, e_l], axis = 1, \
+    join_axes = [fe_w.index])
+result.columns = ['filtered_w', 'unfiltered_w', \
+        'filtered_l', 'unfiltered_l']
+result *= 100.
+boxPlotData(result)
